@@ -1,0 +1,117 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-14          # Apple Silicon runner
+            platform: mac
+          - os: ubuntu-22.04
+            platform: linux
+          - os: windows-2022
+            platform: win
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # ── Install native dependencies ──
+
+      - name: Install dependencies (macOS)
+        if: matrix.platform == 'mac'
+        run: brew install fftw liquid-dsp nlohmann-json pkg-config cmake
+
+      - name: Install dependencies (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfftw3-dev nlohmann-json3-dev cmake pkg-config
+          # liquid-dsp from source
+          git clone https://github.com/jgaeddert/liquid-dsp.git /tmp/liquid-dsp
+          cd /tmp/liquid-dsp
+          ./bootstrap.sh
+          ./configure
+          make -j$(nproc)
+          sudo make install
+          sudo ldconfig
+
+      - name: Install dependencies (Windows)
+        if: matrix.platform == 'win'
+        run: |
+          vcpkg install fftw3:x64-windows liquid-dsp:x64-windows nlohmann-json:x64-windows
+        shell: bash
+
+      # ── Build ──
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Build native addon
+        run: npm run build:native
+
+      - name: Build Electron app
+        run: npm run build
+
+      # ── Package & publish ──
+
+      - name: Package (macOS)
+        if: matrix.platform == 'mac'
+        run: npx electron-builder --mac --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package (Linux)
+        if: matrix.platform == 'linux'
+        run: npx electron-builder --linux --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package (Windows)
+        if: matrix.platform == 'win'
+        run: npx electron-builder --win --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.platform }}
+          path: |
+            dist/*.dmg
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.exe
+            dist/*.yml
+          if-no-files-found: ignore
+
+  publish:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
