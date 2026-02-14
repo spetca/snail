@@ -1,12 +1,16 @@
-<p align="center"><img src="snail.png" width="200"></p>
+<div align="center">
+  <img src="snail.png" width="128" />
+  <h1>Snail</h1>
+  <p>A fast, cross-platform IQ file analyzer built for RF engineers and signal processing workflows.</p>
 
-# Snail
+  ![Electron](https://img.shields.io/badge/Electron-33-blue)
+  ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)
+  ![License](https://img.shields.io/badge/license-MIT-green)
+</div>
 
-A fast, cross-platform IQ file analyzer built for RF engineers and signal processing workflows. Handles multi-gigabyte recordings with instant load times via memory-mapped I/O and GPU-accelerated spectrogram rendering. Snail was built on the shoulders of giants like [inspectrum](https://github.com/miek/inspectrum), [liquid-dsp](https://github.com/jgaeddert/liquid-dsp), and [FFTW](https://www.fftw.org/).
+---
 
-![Electron](https://img.shields.io/badge/Electron-33-blue)
-![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)
-![License](https://img.shields.io/badge/license-MIT-green)
+Snail handles multi-gigabyte recordings with instant load times via memory-mapped I/O and GPU-accelerated spectrogram rendering. Built on the shoulders of giants like [inspectrum](https://github.com/miek/inspectrum), [liquid-dsp](https://github.com/jgaeddert/liquid-dsp), and [FFTW](https://www.fftw.org/).
 
 
 
