@@ -1,6 +1,7 @@
 {
   "name": "snail",
   "version": "0.2.0",
+  "author": "Shane Pet <hardwareteams@gmail.com>",
   "description": "Cross-platform IQ file analyzer",
   "main": "./out/main/index.js",
   "scripts": {

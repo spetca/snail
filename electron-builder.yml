@@ -9,8 +9,8 @@ files:
   - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 extraResources:
-  - from: src/native/build/Release/*.node
-    to: native/
+  - from: src/native/build/Release/snail_native.node
+    to: native/snail_native.node
     filter:
       - '**/*'
 mac:
