@@ -29,7 +29,12 @@ export function ExportDialog({ onClose }: ExportDialogProps): React.ReactElement
       setExporting(true)
       setError(null)
 
-      const basePath = fileInfo.path.replace(/\.[^.]+$/, '_export')
+      const defaultName = fileInfo.path.replace(/\.[^.]+$/, '_export')
+      const basePath = await window.snailAPI.showSaveDialog(defaultName)
+      if (!basePath) {
+        setExporting(false)
+        return
+      }
 
       const result = await window.snailAPI.exportSigMF({
         outputPath: basePath,

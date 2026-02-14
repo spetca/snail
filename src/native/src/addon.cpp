@@ -38,6 +38,10 @@ Napi::Value OpenFile(const Napi::CallbackInfo& info) {
         result.Set("centerFrequency", Napi::Number::New(env, g_source.centerFrequency()));
     }
 
+    if (!g_source.sigmfMetaJson().empty()) {
+        result.Set("sigmfMetaJson", Napi::String::New(env, g_source.sigmfMetaJson()));
+    }
+
     return result;
 }
 
@@ -179,23 +183,23 @@ public:
         secondFormat_(secondFormat) {}
 
     void Execute() override {
-        // Read template from current file
-        std::vector<std::complex<float>> tmpl(tmplLen_);
-        g_source.getSamples(tmplStart_, tmplLen_, tmpl.data());
+        // Read search window from current (main) file
+        std::vector<std::complex<float>> window(tmplLen_);
+        g_source.getSamples(tmplStart_, tmplLen_, window.data());
 
-        // Open second file
+        // Open second file (the pattern to find)
         InputSource secondSource;
         secondSource.open(secondPath_, secondFormat_);
 
-        // Read entire second file
-        size_t sigLen = secondSource.totalSamples();
-        std::vector<std::complex<float>> signal(sigLen);
-        secondSource.getSamples(0, sigLen, signal.data());
+        // Read entire second file as the pattern/template
+        size_t patternLen = secondSource.totalSamples();
+        std::vector<std::complex<float>> pattern(patternLen);
+        secondSource.getSamples(0, patternLen, pattern.data());
 
-        // Cross-correlate
+        // Cross-correlate: slide pattern through window
         result_ = CorrelationEngine::crossCorrelate(
-            signal.data(), sigLen,
-            tmpl.data(), tmplLen_
+            window.data(), tmplLen_,
+            pattern.data(), patternLen
         );
     }
 
@@ -237,6 +241,47 @@ Napi::Value Correlate(const Napi::CallbackInfo& info) {
     return deferred.Promise();
 }
 
+// ── readFileSamples(path, format, start, length) -> Float32Array ──
+// Reads samples from an arbitrary file without disturbing g_source
+
+Napi::Value ReadFileSamples(const Napi::CallbackInfo& info) {
+    auto env = info.Env();
+
+    std::string path = info[0].As<Napi::String>().Utf8Value();
+    std::string format = info[1].As<Napi::String>().Utf8Value();
+    size_t start = static_cast<size_t>(info[2].As<Napi::Number>().DoubleValue());
+    size_t length = static_cast<size_t>(info[3].As<Napi::Number>().DoubleValue());
+
+    InputSource source;
+    try {
+        source.open(path, format);
+    } catch (const std::exception& e) {
+        Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+
+    if (start >= source.totalSamples()) {
+        return Napi::Float32Array::New(env, 0);
+    }
+    if (start + length > source.totalSamples()) {
+        length = source.totalSamples() - start;
+    }
+
+    std::vector<std::complex<float>> samples(length);
+    try {
+        source.getSamples(start, length, samples.data());
+    } catch (const std::exception& e) {
+        Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+
+    auto result = Napi::Float32Array::New(env, length * 2);
+    auto data = reinterpret_cast<const float*>(samples.data());
+    std::memcpy(result.Data(), data, length * 2 * sizeof(float));
+
+    return result;
+}
+
 // ── Module init ──────────────────────────────────────────────────
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
@@ -245,6 +290,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set("computeFFTTile", Napi::Function::New(env, ComputeFFTTile));
     exports.Set("exportSigMF", Napi::Function::New(env, ExportSigMF));
     exports.Set("correlate", Napi::Function::New(env, Correlate));
+    exports.Set("readFileSamples", Napi::Function::New(env, ReadFileSamples));
     return exports;
 }
 

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { FileInfo, SampleFormat } from '../../shared/sample-formats'
+import type { FileInfo, SigMFAnnotation, SampleFormat } from '../../shared/sample-formats'
 
 export type XAxisMode = 'samples' | 'time'
 
@@ -33,14 +33,15 @@ export interface AppState {
   // Cursors
   cursors: CursorState
 
+  // Annotations
+  annotations: SigMFAnnotation[]
+
   // Correlation
+  correlationEnabled: boolean
+  correlationFilePath: string | null
+  correlationFileFormat: SampleFormat
   correlationData: Float32Array | null
   correlationLoading: boolean
-
-  // Correlation pane
-  correlationPaneVisible: boolean
-  correlationStartSample: number
-  correlationLag: number
 
   // Actions
   setFileInfo: (info: FileInfo | null) => void
@@ -58,11 +59,13 @@ export interface AppState {
   setCursorsEnabled: (enabled: boolean) => void
   setCursorX: (x1: number, x2: number) => void
   setCursorY: (y1: number, y2: number) => void
+  setAnnotations: (annotations: SigMFAnnotation[]) => void
+  addAnnotation: (annotation: SigMFAnnotation) => void
+  setCorrelationEnabled: (enabled: boolean) => void
+  setCorrelationFilePath: (path: string | null) => void
+  setCorrelationFileFormat: (format: SampleFormat) => void
   setCorrelationData: (data: Float32Array | null) => void
   setCorrelationLoading: (loading: boolean) => void
-  setCorrelationPaneVisible: (visible: boolean) => void
-  setCorrelationStartSample: (sample: number) => void
-  setCorrelationLag: (lag: number) => void
   reset: () => void
 }
 
@@ -80,21 +83,41 @@ const initialState = {
   yZoomLevel: 1,
   yScrollOffset: 0,
   cursors: { enabled: false, x1: 0, x2: 0, y1: 0, y2: 0 },
-  correlationData: null,
-  correlationLoading: false,
-  correlationPaneVisible: false,
-  correlationStartSample: 0,
-  correlationLag: 0
+  annotations: [] as SigMFAnnotation[],
+  correlationEnabled: false,
+  correlationFilePath: null as string | null,
+  correlationFileFormat: 'cf32' as SampleFormat,
+  correlationData: null as Float32Array | null,
+  correlationLoading: false
 }
 
 export const useStore = create<AppState>((set) => ({
   ...initialState,
 
-  setFileInfo: (info) => set({
-    fileInfo: info,
-    sampleRate: info?.sampleRate ?? 1000000,
-    error: null
-  }),
+  setFileInfo: (info) => {
+    let annotations: SigMFAnnotation[] = []
+    if (info?.sigmfMetaJson) {
+      try {
+        const meta = JSON.parse(info.sigmfMetaJson)
+        if (Array.isArray(meta.annotations)) {
+          annotations = meta.annotations.map((a: any) => ({
+            sampleStart: a['core:sample_start'] ?? 0,
+            sampleCount: a['core:sample_count'] ?? 0,
+            freqLowerEdge: a['core:freq_lower_edge'],
+            freqUpperEdge: a['core:freq_upper_edge'],
+            label: a['core:label'],
+            comment: a['core:comment']
+          }))
+        }
+      } catch { /* ignore parse errors */ }
+    }
+    set({
+      fileInfo: info,
+      sampleRate: info?.sampleRate ?? 1000000,
+      annotations,
+      error: null
+    })
+  },
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
   setFFTSize: (fftSize) => set({ fftSize }),
@@ -115,10 +138,24 @@ export const useStore = create<AppState>((set) => ({
   setCursorY: (y1, y2) => set((s) => ({
     cursors: { ...s.cursors, y1, y2 }
   })),
+  setAnnotations: (annotations) => set({ annotations }),
+  addAnnotation: (annotation) => set((s) => ({
+    annotations: [...s.annotations, annotation]
+  })),
+  setCorrelationEnabled: (correlationEnabled) => set((s) => ({
+    correlationEnabled,
+    // Clear data when toggling off
+    ...(correlationEnabled ? {} : {
+      correlationData: null,
+      correlationFilePath: null
+    })
+  })),
+  setCorrelationFilePath: (correlationFilePath) => set({
+    correlationFilePath,
+    correlationData: null
+  }),
+  setCorrelationFileFormat: (correlationFileFormat) => set({ correlationFileFormat }),
   setCorrelationData: (correlationData) => set({ correlationData }),
   setCorrelationLoading: (correlationLoading) => set({ correlationLoading }),
-  setCorrelationPaneVisible: (correlationPaneVisible) => set({ correlationPaneVisible }),
-  setCorrelationStartSample: (correlationStartSample) => set({ correlationStartSample }),
-  setCorrelationLag: (correlationLag) => set({ correlationLag }),
   reset: () => set(initialState)
 }))

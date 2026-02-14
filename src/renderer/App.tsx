@@ -4,7 +4,6 @@ import { Toolbar } from './components/Toolbar'
 import { ControlsPanel } from './components/ControlsPanel'
 import { SpectrogramView } from './components/SpectrogramView'
 import { TracePlot } from './components/TracePlot'
-import { CorrelationPlot } from './components/CorrelationPlot'
 import { CorrelationPane } from './components/CorrelationPane'
 import { TimeAxis } from './components/TimeAxis'
 import { FrequencyAxis } from './components/FrequencyAxis'
@@ -12,15 +11,14 @@ import { CursorOverlay } from './components/CursorOverlay'
 import { ScrollBar } from './components/ScrollBar'
 import { StatusBar } from './components/StatusBar'
 import { ExportDialog } from './components/ExportDialog'
-import { CorrelationDialog } from './components/CorrelationDialog'
+import { AnnotationDialog } from './components/AnnotationDialog'
 
 export default function App(): React.ReactElement {
   const fileInfo = useStore((s) => s.fileInfo)
   const setFileInfo = useStore((s) => s.setFileInfo)
   const setLoading = useStore((s) => s.setLoading)
   const setError = useStore((s) => s.setError)
-  const correlationData = useStore((s) => s.correlationData)
-  const correlationPaneVisible = useStore((s) => s.correlationPaneVisible)
+  const correlationEnabled = useStore((s) => s.correlationEnabled)
   const scrollOffset = useStore((s) => s.scrollOffset)
   const setScrollOffset = useStore((s) => s.setScrollOffset)
   const fftSize = useStore((s) => s.fftSize)
@@ -29,7 +27,7 @@ export default function App(): React.ReactElement {
   const yScrollOffset = useStore((s) => s.yScrollOffset)
   const setYScrollOffset = useStore((s) => s.setYScrollOffset)
   const [showExport, setShowExport] = React.useState(false)
-  const [showCorrelation, setShowCorrelation] = React.useState(false)
+  const [showAnnotation, setShowAnnotation] = React.useState(false)
 
   const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault()
@@ -54,12 +52,9 @@ export default function App(): React.ReactElement {
   // Compute scrollbar parameters
   const totalSamples = fileInfo?.totalSamples ?? 0
   const stride = fftSize / zoomLevel
-  // viewportSize in samples — approximate, actual depends on spectrogram pixel width
-  // We use a rough estimate; the scrollbar handles proportionality fine
-  const xViewportSamples = 800 * stride // will be refined by actual width
+  const xViewportSamples = 800 * stride
   const totalFreqBins = fftSize / 2
   const visibleFreqBins = totalFreqBins / yZoomLevel
-  const maxYScroll = totalFreqBins - visibleFreqBins
 
   return (
     <div
@@ -73,10 +68,7 @@ export default function App(): React.ReactElement {
     >
       {navigator.userAgent.includes('Mac') && <div className="titlebar-drag" />}
 
-      <Toolbar
-        onExport={() => setShowExport(true)}
-        onCorrelation={() => setShowCorrelation(true)}
-      />
+      <Toolbar onExport={() => setShowExport(true)} onAnnotate={() => setShowAnnotation(true)} />
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <ControlsPanel />
@@ -90,7 +82,6 @@ export default function App(): React.ReactElement {
                     <SpectrogramView />
                     <CursorOverlay />
                   </div>
-                  {/* Horizontal scrollbar below spectrogram */}
                   <ScrollBar
                     orientation="horizontal"
                     totalRange={totalSamples}
@@ -99,7 +90,6 @@ export default function App(): React.ReactElement {
                     onChange={setScrollOffset}
                   />
                 </div>
-                {/* Vertical scrollbar between spectrogram and frequency axis */}
                 {yZoomLevel > 1 && (
                   <ScrollBar
                     orientation="vertical"
@@ -113,8 +103,7 @@ export default function App(): React.ReactElement {
               </div>
               <TimeAxis />
               <TracePlot />
-              {correlationData && !correlationPaneVisible && <CorrelationPlot />}
-              {correlationPaneVisible && <CorrelationPane />}
+              <CorrelationPane />
             </>
           ) : (
             <div
@@ -149,7 +138,7 @@ export default function App(): React.ReactElement {
       <StatusBar />
 
       {showExport && <ExportDialog onClose={() => setShowExport(false)} />}
-      {showCorrelation && <CorrelationDialog onClose={() => setShowCorrelation(false)} />}
+      {showAnnotation && <AnnotationDialog onClose={() => setShowAnnotation(false)} />}
     </div>
   )
 }

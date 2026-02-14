@@ -1,6 +1,8 @@
 import { ipcMain, dialog } from 'electron'
+import * as fs from 'fs'
+import * as path from 'path'
 import { IPC } from '../shared/ipc-channels'
-import type { SampleFormat, FFTTileRequest, ExportConfig, CorrelateRequest } from '../shared/sample-formats'
+import type { SampleFormat, SigMFAnnotation, FFTTileRequest, ExportConfig, CorrelateRequest } from '../shared/sample-formats'
 
 // Native addon will be loaded when built
 let native: any = null
@@ -37,6 +39,19 @@ export function registerIpcHandlers(): void {
     return result.filePaths[0]
   })
 
+  ipcMain.handle(IPC.SHOW_SAVE_DIALOG, async (_event, defaultName?: string) => {
+    const result = await dialog.showSaveDialog({
+      defaultPath: defaultName,
+      filters: [
+        { name: 'SigMF Data', extensions: ['sigmf-data'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    })
+    if (result.canceled || !result.filePath) return null
+    // Strip extension — exportSigMF appends .sigmf-data and .sigmf-meta
+    return result.filePath.replace(/\.(sigmf-data|sigmf-meta)$/, '')
+  })
+
   ipcMain.handle(IPC.OPEN_FILE, async (_event, filePath: string, format?: SampleFormat) => {
     const addon = loadNative()
     if (!addon) {
@@ -66,14 +81,72 @@ export function registerIpcHandlers(): void {
     return addon.exportSigMF(config)
   })
 
+  ipcMain.handle(IPC.READ_FILE_SAMPLES, async (_event, path: string, format: string, start: number, length: number) => {
+    const addon = loadNative()
+    if (!addon) throw new Error('Native addon not loaded')
+    return addon.readFileSamples(path, format, start, length)
+  })
+
   ipcMain.handle(IPC.CORRELATE, async (_event, req: CorrelateRequest) => {
     const addon = loadNative()
     if (!addon) throw new Error('Native addon not loaded')
     return addon.correlate(
-      req.templateStart,
-      req.templateLength,
-      req.secondFilePath,
-      req.secondFileFormat || ''
+      req.windowStart,
+      req.windowLength,
+      req.patternFilePath,
+      req.patternFileFormat || ''
     )
+  })
+
+  ipcMain.handle(IPC.SAVE_ANNOTATION, async (_event, filePath: string, annotation: SigMFAnnotation) => {
+    // Determine the .sigmf-meta path
+    let metaPath: string
+    if (filePath.endsWith('.sigmf-data')) {
+      metaPath = filePath.replace(/\.sigmf-data$/, '.sigmf-meta')
+    } else {
+      metaPath = filePath + '.sigmf-meta'
+    }
+
+    // Read existing meta or create skeleton
+    let meta: any
+    try {
+      const content = fs.readFileSync(metaPath, 'utf-8')
+      meta = JSON.parse(content)
+    } catch {
+      meta = {
+        'global': {
+          'core:datatype': 'cf32_le',
+          'core:version': '1.0.0'
+        },
+        'captures': [],
+        'annotations': []
+      }
+    }
+
+    if (!Array.isArray(meta.annotations)) {
+      meta.annotations = []
+    }
+
+    // Build the SigMF annotation object
+    const sigAnn: Record<string, unknown> = {
+      'core:sample_start': annotation.sampleStart,
+      'core:sample_count': annotation.sampleCount
+    }
+    if (annotation.freqLowerEdge != null) {
+      sigAnn['core:freq_lower_edge'] = annotation.freqLowerEdge
+    }
+    if (annotation.freqUpperEdge != null) {
+      sigAnn['core:freq_upper_edge'] = annotation.freqUpperEdge
+    }
+    if (annotation.label) {
+      sigAnn['core:label'] = annotation.label
+    }
+    if (annotation.comment) {
+      sigAnn['core:comment'] = annotation.comment
+    }
+
+    meta.annotations.push(sigAnn)
+    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf-8')
+    return { success: true }
   })
 }

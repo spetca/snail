@@ -11,6 +11,15 @@ export type SampleFormat =
   | 'rs8'    // Real signed int8
   | 'ru8'    // Real unsigned int8
 
+export interface SigMFAnnotation {
+  sampleStart: number
+  sampleCount: number
+  freqLowerEdge?: number
+  freqUpperEdge?: number
+  label?: string
+  comment?: string
+}
+
 export interface FileInfo {
   path: string
   format: SampleFormat
@@ -18,7 +27,7 @@ export interface FileInfo {
   totalSamples: number
   fileSize: number
   centerFrequency?: number
-  sigmfMeta?: Record<string, unknown>
+  sigmfMetaJson?: string
 }
 
 export interface FFTTileRequest {
@@ -41,10 +50,10 @@ export interface ExportConfig {
 }
 
 export interface CorrelateRequest {
-  templateStart: number
-  templateLength: number
-  secondFilePath: string
-  secondFileFormat?: SampleFormat
+  windowStart: number
+  windowLength: number
+  patternFilePath: string
+  patternFileFormat?: SampleFormat
 }
 
 export const FORMAT_EXTENSIONS: Record<string, SampleFormat> = {

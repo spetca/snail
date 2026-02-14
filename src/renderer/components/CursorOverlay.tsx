@@ -8,6 +8,8 @@ const TRI_H = 12
 const TRI_COLOR = '#FFD700'
 const TRI_HOVER = '#FFE44D'
 
+const ANNOTATION_COLORS = ['#FF6B6B', '#4DABF7', '#51CF66', '#FFD43B', '#CC5DE8', '#FF922B']
+
 type DragTarget = 'x1' | 'x2' | 'y1' | 'y2' | 'all' | null
 
 export function CursorOverlay(): React.ReactElement {
@@ -18,10 +20,13 @@ export function CursorOverlay(): React.ReactElement {
   const [hoverTarget, setHoverTarget] = useState<DragTarget>(null)
 
   const cursors = useStore((s) => s.cursors)
+  const annotations = useStore((s) => s.annotations)
   const sampleRate = useStore((s) => s.sampleRate)
   const fftSize = useStore((s) => s.fftSize)
   const zoomLevel = useStore((s) => s.zoomLevel)
   const scrollOffset = useStore((s) => s.scrollOffset)
+  const yZoomLevel = useStore((s) => s.yZoomLevel)
+  const yScrollOffset = useStore((s) => s.yScrollOffset)
   const xAxisMode = useStore((s) => s.xAxisMode)
   const setCursorX = useStore((s) => s.setCursorX)
   const setCursorY = useStore((s) => s.setCursorY)
@@ -30,7 +35,8 @@ export function CursorOverlay(): React.ReactElement {
   useEffect(() => {
     const canvas = canvasRef.current
     const container = containerRef.current
-    if (!canvas || !container || !cursors.enabled) return
+    const hasContent = cursors.enabled || annotations.length > 0
+    if (!canvas || !container || !hasContent) return
 
     const rect = container.getBoundingClientRect()
     const dpr = window.devicePixelRatio || 1
@@ -45,6 +51,70 @@ export function CursorOverlay(): React.ReactElement {
     ctx.scale(dpr, dpr)
     ctx.clearRect(0, 0, rect.width, rect.height)
 
+    // Draw annotations
+    const samplesPerPx = fftSize / zoomLevel
+    const totalBins = fftSize / 2
+    const visibleBins = totalBins / yZoomLevel
+    const yScrollBins = yScrollOffset / totalBins // normalized
+
+    for (let i = 0; i < annotations.length; i++) {
+      const ann = annotations[i]
+      const color = ANNOTATION_COLORS[i % ANNOTATION_COLORS.length]
+
+      const ax1 = (ann.sampleStart - scrollOffset) / samplesPerPx
+      const ax2 = (ann.sampleStart + ann.sampleCount - scrollOffset) / samplesPerPx
+
+      let ay1: number, ay2: number
+      if (ann.freqLowerEdge != null && ann.freqUpperEdge != null) {
+        // Map frequency to pixel Y: freq -> normalized bin -> pixel
+        // DC is center. Top of view = +sampleRate/2, bottom = -sampleRate/2
+        // Normalized position: (0.5 - freq/sampleRate) maps to [0, 1] for full range
+        const normTop = 0.5 - ann.freqUpperEdge / sampleRate
+        const normBot = 0.5 - ann.freqLowerEdge / sampleRate
+        // Apply Y zoom/scroll
+        ay1 = ((normTop - yScrollBins) * yZoomLevel) * rect.height
+        ay2 = ((normBot - yScrollBins) * yZoomLevel) * rect.height
+      } else {
+        ay1 = 0
+        ay2 = rect.height
+      }
+
+      // Clip to visible area
+      const drawX1 = Math.max(0, ax1)
+      const drawX2 = Math.min(rect.width, ax2)
+      const drawY1 = Math.max(0, Math.min(ay1, ay2))
+      const drawY2 = Math.min(rect.height, Math.max(ay1, ay2))
+
+      if (drawX2 <= drawX1) continue
+
+      // Semi-transparent fill
+      ctx.fillStyle = color + '33'
+      ctx.fillRect(drawX1, drawY1, drawX2 - drawX1, drawY2 - drawY1)
+
+      // Border
+      ctx.strokeStyle = color + 'AA'
+      ctx.lineWidth = 1
+      ctx.setLineDash([])
+      ctx.strokeRect(drawX1, drawY1, drawX2 - drawX1, drawY2 - drawY1)
+
+      // Label
+      if (ann.label && drawX2 - drawX1 > 10) {
+        ctx.font = '10px "JetBrains Mono", monospace'
+        const textWidth = ctx.measureText(ann.label).width
+        const labelPadX = 4
+        const labelPadY = 2
+        const labelH = 14
+        const lx = drawX1 + 2
+        const ly = drawY1 + 2
+
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.75)'
+        ctx.fillRect(lx, ly, textWidth + labelPadX * 2, labelH + labelPadY)
+        ctx.fillStyle = color
+        ctx.fillText(ann.label, lx + labelPadX, ly + labelH - labelPadY)
+      }
+    }
+
+    if (cursors.enabled) {
     const { x1, x2, y1, y2 } = cursors
 
     // Selection fill
@@ -131,7 +201,8 @@ export function CursorOverlay(): React.ReactElement {
       ctx.closePath()
       ctx.fill()
     }
-  }, [cursors, fftSize, zoomLevel, sampleRate, scrollOffset, xAxisMode, hoverTarget])
+    } // end if (cursors.enabled)
+  }, [cursors, annotations, fftSize, zoomLevel, sampleRate, scrollOffset, xAxisMode, yZoomLevel, yScrollOffset, hoverTarget])
 
   const hitTestTriangle = useCallback((mx: number, my: number): DragTarget => {
     const container = containerRef.current
@@ -239,18 +310,20 @@ export function CursorOverlay(): React.ReactElement {
     setHoverTarget(null)
   }, [])
 
-  if (!cursors.enabled) return <></>
+  if (!cursors.enabled && annotations.length === 0) return <></>
 
   return (
     <div
       ref={containerRef}
+      data-spectrogram-overlay
       style={{
         position: 'absolute',
         top: 0,
         left: 0,
         width: '100%',
         height: '100%',
-        cursor: getCursor(dragging || hoverTarget),
+        cursor: cursors.enabled ? getCursor(dragging || hoverTarget) : 'default',
+        pointerEvents: cursors.enabled ? 'auto' : 'none',
         zIndex: 10
       }}
       onMouseDown={handleMouseDown}

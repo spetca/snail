@@ -58,10 +58,11 @@ std::vector<float> CorrelationEngine::crossCorrelate(
     auto planInv = fftwf_plan_dft_1d(fftLen, product, result, FFTW_BACKWARD, FFTW_ESTIMATE);
     fftwf_execute(planInv);
 
-    // Compute magnitudes
-    std::vector<float> output(signalLen);
+    // Compute magnitudes (full correlation: from no overlap to no overlap)
+    size_t outputLen = signalLen + tmplLen - 1;
+    std::vector<float> output(outputLen);
     float invN = 1.0f / fftLen;
-    for (size_t i = 0; i < signalLen; i++) {
+    for (size_t i = 0; i < outputLen; i++) {
         float re = result[i][0] * invN;
         float im = result[i][1] * invN;
         output[i] = std::sqrt(re * re + im * im);
