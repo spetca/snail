@@ -32,7 +32,7 @@ Snail handles multi-gigabyte recordings with instant load times via memory-mappe
 
 ### Download
 
-Pre-built binaries for macOS (Intel + Apple Silicon), Linux, and Windows are available on the [Releases](https://github.com/shanepetcavich/snail/releases) page.
+Pre-built binaries for macOS (Intel + Apple Silicon), Linux, and Windows are available on the [Releases](https://github.com/spetca/snail/releases) page.
 
 ### Build from Source
 
@@ -50,7 +50,7 @@ Pre-built binaries for macOS (Intel + Apple Silicon), Linux, and Windows are ava
 
 ```bash
 # Clone the repository
-git clone https://github.com/shanepetcavich/snail.git
+git clone https://github.com/spetca/snail.git
 cd snail
 
 # Install Node dependencies
