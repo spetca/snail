@@ -72,7 +72,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.COMPUTE_FFT_TILE, async (_event, req: FFTTileRequest) => {
     const addon = loadNative()
     if (!addon) throw new Error('Native addon not loaded')
-    return addon.computeFFTTile(req.startSample, req.fftSize, req.zoomLevel)
+    return addon.computeFFTTile(req.startSample, req.fftSize, req.stride)
   })
 
   ipcMain.handle(IPC.EXPORT_SIGMF, async (_event, config: ExportConfig) => {
@@ -90,12 +90,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.CORRELATE, async (_event, req: CorrelateRequest) => {
     const addon = loadNative()
     if (!addon) throw new Error('Native addon not loaded')
-    return addon.correlate(
-      req.windowStart,
-      req.windowLength,
-      req.patternFilePath,
-      req.patternFileFormat || ''
-    )
+    return addon.correlate(req)
   })
 
   ipcMain.handle(IPC.SAVE_ANNOTATION, async (_event, filePath: string, annotation: SigMFAnnotation) => {

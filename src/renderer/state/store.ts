@@ -46,10 +46,13 @@ export interface AppState {
 
   // Correlation
   correlationEnabled: boolean
+  correlationMode: 'file' | 'self'
   correlationFilePath: string | null
   correlationFileFormat: SampleFormat
   correlationData: Float32Array | null
   correlationLoading: boolean
+  tu: number
+  cpLen: number
 
   // Actions
   setFileInfo: (info: FileInfo | null) => void
@@ -76,10 +79,14 @@ export interface AppState {
   setShowAnnotationDialog: (show: boolean) => void
   setPendingExport: (pending: { start: number; end: number; label?: string; comment?: string } | null) => void
   setCorrelationEnabled: (enabled: boolean) => void
+  setCorrelationMode: (mode: 'file' | 'self') => void
   setCorrelationFilePath: (path: string | null) => void
   setCorrelationFileFormat: (format: SampleFormat) => void
   setCorrelationData: (data: Float32Array | null) => void
   setCorrelationLoading: (loading: boolean) => void
+  setTu: (tu: number) => void
+  setCpLen: (cpLen: number) => void
+  snapToView: () => void
   reset: () => void
 }
 
@@ -105,13 +112,16 @@ const initialState = {
   showAnnotationDialog: false,
   pendingExport: null as { start: number; end: number; label?: string; comment?: string } | null,
   correlationEnabled: false,
+  correlationMode: 'file' as 'file' | 'self',
   correlationFilePath: null as string | null,
   correlationFileFormat: 'cf32' as SampleFormat,
   correlationData: null as Float32Array | null,
-  correlationLoading: false
+  correlationLoading: false,
+  tu: 1024,
+  cpLen: 256
 }
 
-export const useStore = create<AppState>((set) => ({
+export const useStore = create<AppState>((set, get) => ({
   ...initialState,
 
   setFileInfo: (info) => {
@@ -135,12 +145,23 @@ export const useStore = create<AppState>((set) => ({
       fileInfo: info,
       sampleRate: info?.sampleRate ?? 1000000,
       annotations,
-      error: null
+      error: null,
+      zoomLevel: 1,
+      scrollOffset: 0,
+      yZoomLevel: 1,
+      yScrollOffset: 0
     })
   },
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
-  setFFTSize: (fftSize) => set({ fftSize }),
+  setFFTSize: (fftSize) => {
+    const s = get()
+    // stride = currentFFTSize / currentZoom
+    // newZoom = newFFTSize / stride
+    const currentStride = s.fftSize / s.zoomLevel
+    const nextZoom = fftSize / currentStride
+    set({ fftSize, zoomLevel: nextZoom })
+  },
   setZoomLevel: (zoomLevel) => set({ zoomLevel }),
   setPowerMin: (powerMin) => set({ powerMin }),
   setPowerMax: (powerMax) => set({ powerMax }),
@@ -184,6 +205,7 @@ export const useStore = create<AppState>((set) => ({
       correlationFilePath: null
     })
   })),
+  setCorrelationMode: (correlationMode) => set({ correlationMode, correlationData: null }),
   setCorrelationFilePath: (correlationFilePath) => set({
     correlationFilePath,
     correlationData: null
@@ -191,5 +213,20 @@ export const useStore = create<AppState>((set) => ({
   setCorrelationFileFormat: (correlationFileFormat) => set({ correlationFileFormat }),
   setCorrelationData: (correlationData) => set({ correlationData }),
   setCorrelationLoading: (correlationLoading) => set({ correlationLoading }),
+  setTu: (tu) => set({ tu, correlationData: null }),
+  setCpLen: (cpLen) => set({ cpLen, correlationData: null }),
+  snapToView: () => {
+    const s = get()
+    if (!s.fileInfo) return
+    // Stride required to fit all samples: s.fileInfo.totalSamples / s.viewWidth
+    // Zoom = fftSize / stride
+    const fillZoom = (s.fftSize * s.viewWidth) / s.fileInfo.totalSamples
+    set({
+      zoomLevel: Math.min(s.fftSize, fillZoom),
+      scrollOffset: 0,
+      yZoomLevel: 1,
+      yScrollOffset: 0
+    })
+  },
   reset: () => set(initialState)
 }))

@@ -13,7 +13,7 @@ public:
         InputSource& source,
         size_t startSample,
         int fftSize,
-        int zoomLevel
+        int stride
     );
 
     void Execute() override;
@@ -25,6 +25,6 @@ private:
     InputSource& source_;
     size_t startSample_;
     int fftSize_;
-    int zoomLevel_;
+    int stride_;
     std::vector<float> result_;
 };

@@ -14,6 +14,14 @@ public:
         size_t tmplLen
     );
 
+    // CP Self-correlation (Poor man's Schmidl & Cox)
+    static std::vector<float> selfCorrelate(
+        const std::complex<float>* signal,
+        size_t signalLen,
+        size_t tu,
+        size_t cpLen
+    );
+
 private:
     static size_t nextPow2(size_t n);
 };

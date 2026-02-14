@@ -53,7 +53,7 @@ void main() {
 export interface RenderParams {
   scrollOffset: number
   fftSize: number
-  zoomLevel: number
+  stride: number
   powerMin: number
   powerMax: number
   totalSamples: number
@@ -202,7 +202,7 @@ export class SpectrogramRenderer {
     gl.bindTexture(gl.TEXTURE_2D, this.colormapTexture)
     gl.uniform1i(this.uColormap, 1)
 
-    const stride = params.fftSize / params.zoomLevel
+    const stride = params.stride
     const tileSampleCoverage = TILE_LINES * stride
     const samplesPerPixel = stride
     const dpr = window.devicePixelRatio || 1
@@ -217,7 +217,7 @@ export class SpectrogramRenderer {
 
     for (let tIdx = firstTileIdx; tIdx <= lastTileIdx; tIdx++) {
       const tileSampleStart = tIdx * tileSampleCoverage
-      const tileKey = `${tileSampleStart}_${params.fftSize}_${params.zoomLevel}`
+      const tileKey = `${tileSampleStart}_${params.fftSize}_${params.stride}`
       const entry = this.tileCache.get(tileKey)
       if (!entry) continue
 
@@ -261,6 +261,11 @@ export class SpectrogramRenderer {
 
       gl.drawArrays(gl.TRIANGLES, 0, 6)
     }
+  }
+
+  clearTiles(): void {
+    this.tileCache.clear()
+    this.gl.clear(this.gl.COLOR_BUFFER_BIT)
   }
 
   dispose(): void {

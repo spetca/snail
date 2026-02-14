@@ -17,8 +17,6 @@ jobs:
             platform: mac
           - os: ubuntu-22.04
             platform: linux
-          - os: windows-2022
-            platform: win
 
     runs-on: ${{ matrix.os }}
 
@@ -50,11 +48,6 @@ jobs:
           sudo make install
           sudo ldconfig
 
-      - name: Install dependencies (Windows)
-        if: matrix.platform == 'win'
-        run: |
-          vcpkg install fftw3:x64-windows liquid-dsp:x64-windows nlohmann-json:x64-windows
-        shell: bash
 
       # ── Build ──
 
@@ -81,11 +74,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Package (Windows)
-        if: matrix.platform == 'win'
-        run: npx electron-builder --win --publish never
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -95,7 +83,6 @@ jobs:
             dist/*.dmg
             dist/*.AppImage
             dist/*.deb
-            dist/*.exe
             dist/*.yml
           if-no-files-found: ignore
 

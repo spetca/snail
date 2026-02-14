@@ -25,6 +25,10 @@ export function SpectrogramView(): React.ReactElement {
   const setYZoomLevel = useStore((s) => s.setYZoomLevel)
   const setYScrollOffset = useStore((s) => s.setYScrollOffset)
 
+  // Stride: how many samples between FFT columns. Integer >= 1.
+  // zoomLevel > 1 means overlap (stride < fftSize), < 1 means gaps (stride > fftSize)
+  const stride = Math.max(1, Math.round(fftSize / zoomLevel))
+
   // Initialize WebGL renderer
   useEffect(() => {
     const canvas = canvasRef.current
@@ -67,13 +71,15 @@ export function SpectrogramView(): React.ReactElement {
     return () => observer.disconnect()
   }, [])
 
-  // Auto-fill: zoom so signal spans the full viewport width on file load
+  // Reset on new file: clear old tiles and fit to viewport
   useEffect(() => {
     if (!fileInfo || viewSize.width === 0) return
-    // stride = fftSize / zoom, viewSamples = viewWidth * stride
-    // For fill: viewSamples <= totalSamples → zoom >= fftSize * viewWidth / totalSamples
-    const fillZoom = Math.ceil(fftSize * viewSize.width / fileInfo.totalSamples)
-    setZoomLevel(Math.max(1, Math.min(fftSize, fillZoom)))
+    rendererRef.current?.clearTiles()
+    generationRef.current++
+    // Compute zoom so all samples fit: viewWidth * stride <= totalSamples
+    // stride = fftSize / zoom => zoom = fftSize * viewWidth / totalSamples
+    const fillZoom = fftSize * viewSize.width / fileInfo.totalSamples
+    setZoomLevel(Math.min(fftSize, fillZoom))
     setScrollOffset(0)
   }, [fileInfo]) // only on new file, not on every resize/fftSize change
 
@@ -83,10 +89,8 @@ export function SpectrogramView(): React.ReactElement {
     if (viewSize.width === 0) return
 
     const renderer = rendererRef.current
-    const stride = fftSize / zoomLevel
     const tileSampleCoverage = TILE_LINES * stride
-    const samplesPerPixel = stride
-    const totalViewSamples = viewSize.width * samplesPerPixel
+    const totalViewSamples = viewSize.width * stride
 
     const visibleStart = scrollOffset
     const visibleEnd = visibleStart + totalViewSamples
@@ -99,7 +103,7 @@ export function SpectrogramView(): React.ReactElement {
     const renderParams = {
       scrollOffset,
       fftSize,
-      zoomLevel,
+      stride,
       powerMin,
       powerMax,
       totalSamples: fileInfo.totalSamples,
@@ -118,7 +122,7 @@ export function SpectrogramView(): React.ReactElement {
         if (tileSampleStart >= fileInfo.totalSamples) break
         if (tileSampleStart < 0) continue
 
-        const tileKey = `${tileSampleStart}_${fftSize}_${zoomLevel}`
+        const tileKey = `${tileSampleStart}_${fftSize}_${stride}`
         if (renderer.hasTile(tileKey)) continue
         needed.push({ tileKey, tileSampleStart })
       }
@@ -133,7 +137,7 @@ export function SpectrogramView(): React.ReactElement {
           window.snailAPI.computeFFTTile({
             startSample: tileSampleStart,
             fftSize,
-            zoomLevel
+            stride
           }).then((rawData) => {
             if (generationRef.current !== generation) return
             if (!rawData) return
@@ -162,55 +166,104 @@ export function SpectrogramView(): React.ReactElement {
     }
 
     loadTiles()
-  }, [fileInfo, fftSize, zoomLevel, powerMin, powerMax, scrollOffset, viewSize, yZoomLevel, yScrollOffset])
+  }, [fileInfo, fftSize, stride, powerMin, powerMax, scrollOffset, viewSize, yZoomLevel, yScrollOffset])
+
+  // Min zoom: enough to fit all samples in the viewport
+  const minZoom = fileInfo && viewSize.width > 0
+    ? fftSize * viewSize.width / fileInfo.totalSamples
+    : 0.01
+
+  // Snap zoom: always guarantee at least ±1 stride change in the intended direction
+  const snapZoom = (current: number, factor: number): number => {
+    const currentStride = Math.max(1, Math.round(fftSize / current))
+    const rawZoom = current * factor
+    const newStride = Math.max(1, Math.round(fftSize / rawZoom))
+
+    // If stride didn't change, force it by ±1
+    if (newStride === currentStride) {
+      const forcedStride = factor > 1
+        ? Math.max(1, currentStride - 1)  // zooming in = smaller stride
+        : currentStride + 1               // zooming out = larger stride
+      return Math.max(minZoom, Math.min(fftSize, fftSize / forcedStride))
+    }
+    return Math.max(minZoom, Math.min(fftSize, rawZoom))
+  }
+
+  // Helper: zoom X axis anchored to mouse X position
+  const zoomX = useCallback((factor: number, mouseX: number) => {
+    if (!fileInfo) return
+    const oldStride = stride
+    const newZoom = snapZoom(zoomLevel, factor)
+    const newStride = Math.max(1, Math.round(fftSize / newZoom))
+    if (newStride === oldStride) return
+    setZoomLevel(newZoom)
+    if (newZoom <= minZoom) {
+      setScrollOffset(0)
+    } else {
+      const sampleAtCursor = scrollOffset + mouseX * oldStride
+      const newOffset = sampleAtCursor - mouseX * newStride
+      const maxOffset = Math.max(0, fileInfo.totalSamples - viewSize.width * newStride)
+      setScrollOffset(Math.max(0, Math.min(maxOffset, Math.round(newOffset))))
+    }
+  }, [fileInfo, fftSize, zoomLevel, stride, scrollOffset, setScrollOffset, setZoomLevel, minZoom, viewSize.width])
+
+  // Helper: zoom Y axis anchored to mouse Y position
+  const zoomY = useCallback((factor: number, mouseY: number, containerHeight: number) => {
+    const totalBins = fftSize / 2
+    const maxYZoom = totalBins
+    const raw = yZoomLevel * factor
+    const newYZoom = Math.max(1, Math.min(maxYZoom,
+      factor > 1 ? Math.ceil(raw) : Math.floor(raw)))
+    if (newYZoom === yZoomLevel) return
+
+    // Bin under cursor before zoom
+    const oldVisibleBins = totalBins / yZoomLevel
+    const fracY = mouseY / containerHeight // 0=top, 1=bottom
+    const binAtCursor = yScrollOffset + fracY * oldVisibleBins
+
+    // Adjust scroll so same bin stays under cursor after zoom
+    const newVisibleBins = totalBins / newYZoom
+    const newYScroll = binAtCursor - fracY * newVisibleBins
+    const maxYScroll = totalBins - newVisibleBins
+
+    setYZoomLevel(newYZoom)
+    if (newYZoom <= 1) {
+      setYScrollOffset(0)
+    } else {
+      setYScrollOffset(Math.max(0, Math.min(maxYScroll, newYScroll)))
+    }
+  }, [fftSize, yZoomLevel, yScrollOffset, setYZoomLevel, setYScrollOffset])
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     if (!fileInfo) return
+    e.preventDefault()
+
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const mouseX = e.clientX - rect.left
+    const mouseY = e.clientY - rect.top
 
     if (e.shiftKey && !e.ctrlKey && !e.metaKey) {
-      // Shift+wheel: Y-axis zoom (frequency)
-      e.preventDefault()
-      const factor = e.deltaY > 0 ? 1 / 1.25 : 1.25
-      const maxYZoom = fftSize / 2
-      const newYZoom = Math.max(1, Math.min(maxYZoom, Math.round(yZoomLevel * factor)))
-      if (newYZoom === yZoomLevel) return
-
-      // Clamp Y scroll offset
-      const totalBins = fftSize / 2
-      const visibleBins = totalBins / newYZoom
-      const maxYScroll = totalBins - visibleBins
-      setYZoomLevel(newYZoom)
-      setYScrollOffset(Math.max(0, Math.min(maxYScroll, yScrollOffset)))
-    } else if (e.ctrlKey || e.metaKey) {
-      // Smart zoom: keep the sample under the cursor fixed
-      e.preventDefault()
-      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-      const mouseX = e.clientX - rect.left // CSS pixels from left edge
-
-      const oldStride = fftSize / zoomLevel
-      // Multiplicative zoom: each scroll step scales by ~1.25x, snapped to integer
-      const factor = e.deltaY > 0 ? 1 / 1.25 : 1.25
-      const newZoom = Math.max(1, Math.min(fftSize, Math.round(zoomLevel * factor)))
-      if (newZoom === zoomLevel) return
-
-      const newStride = fftSize / newZoom
-
-      // Sample under cursor before zoom
-      const sampleAtCursor = scrollOffset + mouseX * oldStride
-      // Adjust scroll so same sample stays under cursor after zoom
-      const newOffset = sampleAtCursor - mouseX * newStride
-      const maxOffset = Math.max(0, fileInfo.totalSamples - fftSize)
-
-      setZoomLevel(newZoom)
-      setScrollOffset(Math.max(0, Math.min(maxOffset, Math.round(newOffset))))
-    } else {
-      const stride = fftSize / zoomLevel
+      // Shift+scroll: pan horizontally (time axis)
       const scrollDelta = Math.round(e.deltaY * stride)
-      const maxOffset = Math.max(0, fileInfo.totalSamples - fftSize)
+      const maxOffset = Math.max(0, fileInfo.totalSamples - viewSize.width * stride)
       const newOffset = Math.max(0, Math.min(maxOffset, scrollOffset + scrollDelta))
       setScrollOffset(newOffset)
+    } else if (e.shiftKey && (e.ctrlKey || e.metaKey)) {
+      // Ctrl+Shift+scroll: Y-only zoom
+      const factor = e.deltaY > 0 ? 1 / 1.25 : 1.25
+      zoomY(factor, mouseY, rect.height)
+    } else if (e.ctrlKey || e.metaKey) {
+      // Ctrl/Cmd+scroll: X-only zoom anchored to cursor
+      const factor = e.deltaY > 0 ? 1 / 1.25 : 1.25
+      zoomX(factor, mouseX)
+    } else {
+      // Default scroll/pinch: zoom both X and Y (Y at 50% rate)
+      const xFactor = e.deltaY > 0 ? 1 / 1.25 : 1.25
+      const yFactor = e.deltaY > 0 ? 1 / 1.12 : 1.12 // ~50% rate
+      zoomX(xFactor, mouseX)
+      zoomY(yFactor, mouseY, rect.height)
     }
-  }, [fileInfo, fftSize, zoomLevel, scrollOffset, setScrollOffset, setZoomLevel, yZoomLevel, yScrollOffset, setYZoomLevel, setYScrollOffset])
+  }, [fileInfo, fftSize, stride, zoomLevel, scrollOffset, setScrollOffset, zoomX, zoomY, viewSize.width])
 
   return (
     <div

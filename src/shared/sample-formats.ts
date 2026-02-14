@@ -33,7 +33,7 @@ export interface FileInfo {
 export interface FFTTileRequest {
   startSample: number
   fftSize: number
-  zoomLevel: number
+  stride: number
 }
 
 export interface ExportConfig {
@@ -50,10 +50,15 @@ export interface ExportConfig {
 }
 
 export interface CorrelateRequest {
+  mode: 'file' | 'self'
   windowStart: number
   windowLength: number
-  patternFilePath: string
+  // For 'file' mode
+  patternFilePath?: string
   patternFileFormat?: SampleFormat
+  // For 'self' mode
+  tu?: number
+  cpLen?: number
 }
 
 export const FORMAT_EXTENSIONS: Record<string, SampleFormat> = {

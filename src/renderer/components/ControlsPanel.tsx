@@ -28,12 +28,13 @@ export function ControlsPanel(): React.ReactElement {
   const setXAxisMode = useStore((s) => s.setXAxisMode)
   const setCursorsEnabled = useStore((s) => s.setCursorsEnabled)
   const setScrollOffset = useStore((s) => s.setScrollOffset)
+  const snapToView = useStore((s) => s.snapToView)
 
   const handleAnnotationClick = (ann: SigMFAnnotation) => {
     if (!fileInfo) return
     // Zoom so annotation fills ~80% of the viewport width
-    const targetZoom = Math.round((viewWidth * fftSize * 0.8) / ann.sampleCount)
-    const newZoom = Math.max(1, Math.min(fftSize, targetZoom))
+    const targetZoom = (viewWidth * fftSize * 0.8) / ann.sampleCount
+    const newZoom = Math.min(fftSize, targetZoom)
     setZoomLevel(newZoom)
 
     const newStride = fftSize / newZoom
@@ -81,16 +82,32 @@ export function ControlsPanel(): React.ReactElement {
       <Section title="Zoom">
         <input
           type="range"
-          min={0}
+          min={-10}
           max={Math.log2(fftSize)}
-          step={0.25}
+          step={0.1}
           value={Math.log2(zoomLevel)}
           onChange={(e) => {
-            const z = Math.round(Math.pow(2, Number(e.target.value)))
-            setZoomLevel(Math.max(1, Math.min(fftSize, z)))
+            const z = Math.pow(2, Number(e.target.value))
+            setZoomLevel(Math.min(fftSize, z))
           }}
         />
-        <span style={valStyle}>{zoomLevel}x</span>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={valStyle}>{zoomLevel < 0.1 ? zoomLevel.toExponential(2) : zoomLevel.toFixed(2)}x</span>
+          <button
+            onClick={snapToView}
+            style={{
+              background: 'var(--surface)',
+              border: '1px solid var(--border)',
+              color: 'var(--text-muted)',
+              fontSize: 10,
+              padding: '2px 8px',
+              cursor: 'pointer',
+              borderRadius: 3
+            }}
+          >
+            Fit All
+          </button>
+        </div>
       </Section>
 
       <Section title="Power (dB)">

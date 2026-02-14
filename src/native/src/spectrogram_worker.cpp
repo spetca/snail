@@ -10,18 +10,18 @@ SpectrogramWorker::SpectrogramWorker(
     InputSource& source,
     size_t startSample,
     int fftSize,
-    int zoomLevel
+    int stride
 ) : Napi::AsyncWorker(env),
     deferred_(deferred),
     source_(source),
     startSample_(startSample),
     fftSize_(fftSize),
-    zoomLevel_(zoomLevel) {}
+    stride_(stride) {}
 
 void SpectrogramWorker::Execute() {
     FFTEngine fft(fftSize_);
 
-    int stride = fftSize_ / zoomLevel_;
+    int stride = stride_;
     int numLines = TILE_LINES;
 
     // Only compute lines where the full FFT window fits in the file

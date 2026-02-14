@@ -27,7 +27,3 @@ linux:
     - AppImage
     - deb
   category: Utility
-win:
-  icon: build/icons/win/icon.ico
-  target:
-    - nsis

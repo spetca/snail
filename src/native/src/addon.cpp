@@ -78,17 +78,17 @@ Napi::Value GetSamples(const Napi::CallbackInfo& info) {
     return result;
 }
 
-// ── computeFFTTile(startSample, fftSize, zoomLevel) -> Promise<Float32Array> ──
+// ── computeFFTTile(startSample, fftSize, stride) -> Promise<Float32Array> ──
 
 Napi::Value ComputeFFTTile(const Napi::CallbackInfo& info) {
     auto env = info.Env();
 
     size_t startSample = static_cast<size_t>(info[0].As<Napi::Number>().DoubleValue());
     int fftSize = info[1].As<Napi::Number>().Int32Value();
-    int zoomLevel = info[2].As<Napi::Number>().Int32Value();
+    int stride = info[2].As<Napi::Number>().Int32Value();
 
     auto deferred = Napi::Promise::Deferred::New(env);
-    auto worker = new SpectrogramWorker(env, deferred, g_source, startSample, fftSize, zoomLevel);
+    auto worker = new SpectrogramWorker(env, deferred, g_source, startSample, fftSize, stride);
     worker->Queue();
 
     return deferred.Promise();
@@ -171,36 +171,50 @@ public:
     CorrelationWorker(
         Napi::Env env,
         Napi::Promise::Deferred deferred,
-        size_t tmplStart,
-        size_t tmplLen,
-        const std::string& secondPath,
-        const std::string& secondFormat
+        const std::string& mode,
+        size_t windowStart,
+        size_t windowLen,
+        const std::string& secondPath = "",
+        const std::string& secondFormat = "",
+        size_t tu = 0,
+        size_t cpLen = 0
     ) : Napi::AsyncWorker(env),
         deferred_(deferred),
-        tmplStart_(tmplStart),
-        tmplLen_(tmplLen),
+        mode_(mode),
+        windowStart_(windowStart),
+        windowLen_(windowLen),
         secondPath_(secondPath),
-        secondFormat_(secondFormat) {}
+        secondFormat_(secondFormat),
+        tu_(tu),
+        cpLen_(cpLen) {}
 
     void Execute() override {
         // Read search window from current (main) file
-        std::vector<std::complex<float>> window(tmplLen_);
-        g_source.getSamples(tmplStart_, tmplLen_, window.data());
+        std::vector<std::complex<float>> signal(windowLen_);
+        g_source.getSamples(windowStart_, windowLen_, signal.data());
 
-        // Open second file (the pattern to find)
-        InputSource secondSource;
-        secondSource.open(secondPath_, secondFormat_);
+        if (mode_ == "file") {
+            // Open second file (the pattern to find)
+            InputSource secondSource;
+            secondSource.open(secondPath_, secondFormat_);
 
-        // Read entire second file as the pattern/template
-        size_t patternLen = secondSource.totalSamples();
-        std::vector<std::complex<float>> pattern(patternLen);
-        secondSource.getSamples(0, patternLen, pattern.data());
+            // Read entire second file as the pattern/template
+            size_t patternLen = secondSource.totalSamples();
+            std::vector<std::complex<float>> pattern(patternLen);
+            secondSource.getSamples(0, patternLen, pattern.data());
 
-        // Cross-correlate: slide pattern through window
-        result_ = CorrelationEngine::crossCorrelate(
-            window.data(), tmplLen_,
-            pattern.data(), patternLen
-        );
+            // Cross-correlate: slide pattern through window
+            result_ = CorrelationEngine::crossCorrelate(
+                signal.data(), windowLen_,
+                pattern.data(), patternLen
+            );
+        } else if (mode_ == "self") {
+            // Self-correlation (Schmidl & Cox)
+            result_ = CorrelationEngine::selfCorrelate(
+                signal.data(), windowLen_,
+                tu_, cpLen_
+            );
+        }
     }
 
     void OnOK() override {
@@ -216,26 +230,42 @@ public:
 
 private:
     Napi::Promise::Deferred deferred_;
-    size_t tmplStart_;
-    size_t tmplLen_;
+    std::string mode_;
+    size_t windowStart_;
+    size_t windowLen_;
     std::string secondPath_;
     std::string secondFormat_;
+    size_t tu_;
+    size_t cpLen_;
     std::vector<float> result_;
 };
 
 Napi::Value Correlate(const Napi::CallbackInfo& info) {
     auto env = info.Env();
+    auto config = info[0].As<Napi::Object>();
 
-    size_t tmplStart = static_cast<size_t>(info[0].As<Napi::Number>().DoubleValue());
-    size_t tmplLen = static_cast<size_t>(info[1].As<Napi::Number>().DoubleValue());
-    std::string secondPath = info[2].As<Napi::String>().Utf8Value();
-    std::string secondFormat;
-    if (info.Length() > 3 && info[3].IsString()) {
-        secondFormat = info[3].As<Napi::String>().Utf8Value();
+    std::string mode = config.Get("mode").As<Napi::String>().Utf8Value();
+    size_t windowStart = static_cast<size_t>(config.Get("windowStart").As<Napi::Number>().DoubleValue());
+    size_t windowLength = static_cast<size_t>(config.Get("windowLength").As<Napi::Number>().DoubleValue());
+
+    std::string secondPath, secondFormat;
+    size_t tu = 0, cpLen = 0;
+
+    if (mode == "file") {
+        secondPath = config.Get("patternFilePath").As<Napi::String>().Utf8Value();
+        if (config.Has("patternFileFormat") && config.Get("patternFileFormat").IsString()) {
+            secondFormat = config.Get("patternFileFormat").As<Napi::String>().Utf8Value();
+        }
+    } else if (mode == "self") {
+        tu = static_cast<size_t>(config.Get("tu").As<Napi::Number>().DoubleValue());
+        cpLen = static_cast<size_t>(config.Get("cpLen").As<Napi::Number>().DoubleValue());
     }
 
     auto deferred = Napi::Promise::Deferred::New(env);
-    auto worker = new CorrelationWorker(env, deferred, tmplStart, tmplLen, secondPath, secondFormat);
+    auto worker = new CorrelationWorker(
+        env, deferred, mode, windowStart, windowLength,
+        secondPath, secondFormat, tu, cpLen
+    );
     worker->Queue();
 
     return deferred.Promise();

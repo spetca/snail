@@ -119,3 +119,53 @@ std::vector<float> CorrelationEngine::crossCorrelate(
 
     return output;
 }
+
+std::vector<float> CorrelationEngine::selfCorrelate(
+    const std::complex<float>* signal,
+    size_t signalLen,
+    size_t tu,
+    size_t cpLen
+) {
+    if (signalLen < tu + cpLen) return {};
+
+    size_t outLen = signalLen - tu - cpLen + 1;
+    std::vector<float> output(outLen);
+
+    std::complex<float> currentProductSum(0, 0);
+    float currentEnergyA = 0;
+    float currentEnergyB = 0;
+
+    // Initialize first window
+    for (size_t i = 0; i < cpLen; i++) {
+        currentProductSum += signal[i] * std::conj(signal[i + tu]);
+        currentEnergyA += std::norm(signal[i]);
+        currentEnergyB += std::norm(signal[i + tu]);
+    }
+
+    auto getMag = [&](const std::complex<float>& ps, float ea, float eb) {
+        float den = std::sqrt(ea * eb);
+        if (den > 1e-12f) return std::abs(ps) / den;
+        return 0.0f;
+    };
+
+    output[0] = getMag(currentProductSum, currentEnergyA, currentEnergyB);
+
+    // Slide window
+    for (size_t j = 1; j < outLen; j++) {
+        size_t oldIdx = j - 1;
+        size_t newIdx = j + cpLen - 1;
+
+        currentProductSum -= signal[oldIdx] * std::conj(signal[oldIdx + tu]);
+        currentProductSum += signal[newIdx] * std::conj(signal[newIdx + tu]);
+
+        currentEnergyA -= std::norm(signal[oldIdx]);
+        currentEnergyA += std::norm(signal[newIdx]);
+
+        currentEnergyB -= std::norm(signal[oldIdx + tu]);
+        currentEnergyB += std::norm(signal[newIdx + tu]);
+
+        output[j] = getMag(currentProductSum, currentEnergyA, currentEnergyB);
+    }
+
+    return output;
+}

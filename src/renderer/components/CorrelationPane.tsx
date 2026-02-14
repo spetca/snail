@@ -19,18 +19,61 @@ export function CorrelationPane(): React.ReactElement {
   const computeGenRef = useRef(0)
 
   const correlationEnabled = useStore((s) => s.correlationEnabled)
+  const correlationMode = useStore((s) => s.correlationMode)
   const correlationFilePath = useStore((s) => s.correlationFilePath)
   const correlationFileFormat = useStore((s) => s.correlationFileFormat)
   const correlationData = useStore((s) => s.correlationData)
   const correlationLoading = useStore((s) => s.correlationLoading)
+  const setCorrelationMode = useStore((s) => s.setCorrelationMode)
   const setCorrelationFilePath = useStore((s) => s.setCorrelationFilePath)
   const setCorrelationFileFormat = useStore((s) => s.setCorrelationFileFormat)
   const setCorrelationData = useStore((s) => s.setCorrelationData)
   const setCorrelationLoading = useStore((s) => s.setCorrelationLoading)
+  const tu = useStore((s) => s.tu)
+  const cpLen = useStore((s) => s.cpLen)
+  const setTu = useStore((s) => s.setTu)
+  const setCpLen = useStore((s) => s.setCpLen)
+  const sampleRate = useStore((s) => s.sampleRate)
   const cursors = useStore((s) => s.cursors)
   const fftSize = useStore((s) => s.fftSize)
   const zoomLevel = useStore((s) => s.zoomLevel)
   const scrollOffset = useStore((s) => s.scrollOffset)
+
+  // Local state for flexible input
+  const [inputMode, setInputMode] = React.useState<'samples' | 'time'>('samples')
+  const [tuText, setTuText] = React.useState(tu.toString())
+  const [cpText, setCpText] = React.useState(cpLen.toString())
+
+  // Sync text when tu/cp changes from outside (e.g. store reset or mode toggle)
+  useEffect(() => {
+    const currentTuVal = inputMode === 'samples' ? tu : tu / sampleRate
+    const currentCpVal = inputMode === 'samples' ? cpLen : cpLen / sampleRate
+
+    // Only update if the parsed value in the text box differs from the store
+    // This prevents "snapping" while typing (e.g. typing '66.6' -> '66.600e-6')
+    if (parseFloat(tuText) !== currentTuVal) {
+      setTuText(inputMode === 'samples' ? tu.toString() : (tu / sampleRate).toExponential(3))
+    }
+    if (parseFloat(cpText) !== currentCpVal) {
+      setCpText(inputMode === 'samples' ? cpLen.toString() : (cpLen / sampleRate).toExponential(3))
+    }
+  }, [tu, cpLen, inputMode, sampleRate])
+
+  const handleTuChange = (val: string) => {
+    setTuText(val)
+    const num = parseFloat(val)
+    if (!isNaN(num) && isFinite(num)) {
+      setTu(Math.round(inputMode === 'time' ? num * sampleRate : num))
+    }
+  }
+
+  const handleCpChange = (val: string) => {
+    setCpText(val)
+    const num = parseFloat(val)
+    if (!isNaN(num) && isFinite(num)) {
+      setCpLen(Math.round(inputMode === 'time' ? num * sampleRate : num))
+    }
+  }
 
   // Compute search window from X cursors
   const samplesPerPixel = fftSize / zoomLevel
@@ -49,7 +92,8 @@ export function CorrelationPane(): React.ReactElement {
 
   // Auto-compute correlation (debounced) when inputs change
   useEffect(() => {
-    if (!correlationEnabled || !correlationFilePath || !cursors.enabled) return
+    if (!correlationEnabled || !cursors.enabled) return
+    if (correlationMode === 'file' && !correlationFilePath) return
     if (Math.abs(cursors.x2 - cursors.x1) < 5) return
 
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -59,10 +103,13 @@ export function CorrelationPane(): React.ReactElement {
       setCorrelationLoading(true)
       try {
         const result = await window.snailAPI.correlate({
+          mode: correlationMode,
           windowStart,
           windowLength,
-          patternFilePath: correlationFilePath,
-          patternFileFormat: correlationFileFormat
+          patternFilePath: correlationFilePath || undefined,
+          patternFileFormat: correlationFileFormat,
+          tu,
+          cpLen
         })
         if (computeGenRef.current === gen) {
           setCorrelationData(result)
@@ -83,9 +130,9 @@ export function CorrelationPane(): React.ReactElement {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
   }, [
-    correlationEnabled, correlationFilePath, correlationFileFormat,
+    correlationEnabled, correlationMode, correlationFilePath, correlationFileFormat,
     cursors.enabled, cursors.x1, cursors.x2,
-    windowStart, windowLength,
+    windowStart, windowLength, tu, cpLen,
     setCorrelationData, setCorrelationLoading
   ])
 
@@ -193,9 +240,12 @@ export function CorrelationPane(): React.ReactElement {
       if (correlationLoading) {
         ctx.fillStyle = '#FFD700'
         ctx.fillText('Computing correlation...', 6, PLOT_HEIGHT / 2 + 4)
-      } else if (!correlationFilePath) {
+      } else if (correlationMode === 'file' && !correlationFilePath) {
         ctx.fillStyle = 'rgba(255,255,255,0.3)'
         ctx.fillText('Load a pattern file and set X cursors to compute', 6, PLOT_HEIGHT / 2 + 4)
+      } else {
+        ctx.fillStyle = 'rgba(255,255,255,0.3)'
+        ctx.fillText('Set X cursors to compute self-correlation', 6, PLOT_HEIGHT / 2 + 4)
       }
       return
     }
@@ -255,10 +305,17 @@ export function CorrelationPane(): React.ReactElement {
     ctx.fillStyle = '#FFD700'
     ctx.fillText(`Peak at lag ${lag} (rho: ${peakVal.toFixed(3)})`, 6, 28)
     ctx.fillStyle = 'rgba(255,255,255,0.4)'
-    ctx.fillText(
-      `Full linear slide: [-${patternLen - 1}, +${windowLength - 1}] relative to window ${windowStart}`,
-      6, PLOT_HEIGHT - 6
-    )
+    if (correlationMode === 'file') {
+      ctx.fillText(
+        `Full linear slide: [-${patternLen - 1}, +${windowLength - 1}] relative to window ${windowStart}`,
+        6, PLOT_HEIGHT - 6
+      )
+    } else {
+      ctx.fillText(
+        `Self-Correlation: Tu=${tu}, CP=${cpLen} within window ${windowStart}`,
+        6, PLOT_HEIGHT - 6
+      )
+    }
   }, [correlationData, correlationLoading, correlationFilePath, windowStart, windowLength])
 
   if (!correlationEnabled) return <></>
@@ -286,26 +343,105 @@ export function CorrelationPane(): React.ReactElement {
         }}
       >
         <span style={{ color: 'var(--text-dim)', fontWeight: 600 }}>Correlation</span>
-        <button
-          onClick={handleLoadFile}
-          style={{ fontSize: 11, padding: '2px 8px' }}
-        >
-          {correlationFilePath ? 'Change File' : 'Load Pattern File'}
-        </button>
-        {correlationFilePath && (
-          <span style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 10 }}>
-            {correlationFilePath.split('/').pop()}
-          </span>
-        )}
-        <select
-          value={correlationFileFormat}
-          onChange={(e) => setCorrelationFileFormat(e.target.value as SampleFormat)}
-          style={{ fontSize: 11, padding: '2px 4px' }}
-        >
-          {FORMATS.map((f) => (
-            <option key={f} value={f}>{f}</option>
+
+        <div style={{ display: 'flex', gap: 2, background: 'var(--bg3)', borderRadius: 4, padding: 2 }}>
+          {(['file', 'self'] as const).map((mode) => (
+            <button
+              key={mode}
+              onClick={() => setCorrelationMode(mode)}
+              style={{
+                fontSize: 10,
+                padding: '2px 6px',
+                background: correlationMode === mode ? 'var(--accent)' : 'transparent',
+                color: correlationMode === mode ? 'var(--bg0)' : 'var(--text-muted)',
+                border: 'none',
+                borderRadius: 2
+              }}
+            >
+              {mode === 'file' ? 'File' : 'Self'}
+            </button>
           ))}
-        </select>
+        </div>
+
+        {correlationMode === 'file' ? (
+          <>
+            <button
+              onClick={handleLoadFile}
+              style={{ fontSize: 11, padding: '2px 8px' }}
+            >
+              {correlationFilePath ? 'Change File' : 'Load Pattern File'}
+            </button>
+            {correlationFilePath && (
+              <span style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 10 }}>
+                {correlationFilePath.split('/').pop()}
+              </span>
+            )}
+            <select
+              value={correlationFileFormat}
+              onChange={(e) => setCorrelationFileFormat(e.target.value as SampleFormat)}
+              style={{ fontSize: 11, padding: '2px 4px' }}
+            >
+              {FORMATS.map((f) => (
+                <option key={f} value={f}>{f}</option>
+              ))}
+            </select>
+          </>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ display: 'flex', gap: 2, background: 'var(--bg3)', borderRadius: 4, padding: 2 }}>
+              {(['samples', 'time'] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setInputMode(m)}
+                  style={{
+                    fontSize: 9,
+                    padding: '1px 4px',
+                    background: inputMode === m ? 'var(--bg0)' : 'transparent',
+                    color: inputMode === m ? 'var(--text)' : 'var(--text-muted)',
+                    border: 'none',
+                    borderRadius: 2
+                  }}
+                >
+                  {m === 'samples' ? 'Smpl' : 'Time'}
+                </button>
+              ))}
+            </div>
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>Tu:</span>
+              <input
+                type="text"
+                value={tuText}
+                onChange={(e) => handleTuChange(e.target.value)}
+                style={{ width: 70, fontSize: 10, padding: '1px 4px', fontFamily: 'var(--font-mono)' }}
+                placeholder={inputMode === 'samples' ? 'Samples' : 'e.g. 66e-6'}
+              />
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>CP:</span>
+              <input
+                type="text"
+                value={cpText}
+                onChange={(e) => handleCpChange(e.target.value)}
+                style={{ width: 70, fontSize: 10, padding: '1px 4px', fontFamily: 'var(--font-mono)' }}
+                placeholder={inputMode === 'samples' ? 'Samples' : 'e.g. 16e-6'}
+              />
+            </label>
+
+            <div style={{
+              fontSize: 10,
+              color: 'var(--accent)',
+              fontFamily: 'serif',
+              fontStyle: 'italic',
+              background: 'rgba(0,229,160,0.05)',
+              padding: '2px 8px',
+              borderRadius: 4,
+              border: '1px solid rgba(0,229,160,0.1)'
+            }}>
+              Schmidl & Cox: ρ(d) = |Σ x[d+m] x*[d+m+Tu]| / √(Σ|x[d+m]|² Σ|x[d+m+Tu]|²)
+            </div>
+          </div>
+        )}
         {correlationLoading && (
           <span style={{ color: '#FFD700', fontSize: 10 }}>Computing...</span>
         )}
