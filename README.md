@@ -2,19 +2,23 @@
 
 # Snail
 
-A fast, cross-platform IQ file analyzer built for RF engineers and signal processing workflows. Handles multi-gigabyte recordings with instant load times via memory-mapped I/O and GPU-accelerated spectrogram rendering.
+A fast, cross-platform IQ file analyzer built for RF engineers and signal processing workflows. Handles multi-gigabyte recordings with instant load times via memory-mapped I/O and GPU-accelerated spectrogram rendering. Snail was built on the shoulders of giants like [inspectrum](https://github.com/miek/inspectrum), [liquid-dsp](https://github.com/jgaeddert/liquid-dsp), and [FFTW](https://www.fftw.org/).
 
 ![Electron](https://img.shields.io/badge/Electron-33-blue)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-## Features
+
+
+## Snail in a Snail shell
+
+<p align="center"><img src="/pics/snail.png" width="200"></p>
+
 
 - **Instant file loading** — Memory-mapped I/O opens gigabyte-scale files in milliseconds
 - **WebGL spectrogram** — GPU-rendered tiled spectrogram with real-time pan and zoom
-- **Smart zoom** — Pinch or Ctrl+scroll zooms toward your cursor position
 - **11 IQ formats** — cf32, cf64, cs32, cs16, cs8, cu8, rf32, rf64, rs16, rs8, ru8
-- **SigMF support** — Reads `.sigmf-meta` + `.sigmf-data` pairs, auto-detects sample rate and center frequency
+- **SigMF support** — Reads `.sigmf-meta` + `.sigmf-data` pairs, auto-detects sample rate and center frequency, add annotations time and frequency (boxes)!
 - **Dual-axis cursors** — Measure time/sample deltas and frequency/bandwidth
 - **I/Q trace plot** — Time-domain waveform view synced with the spectrogram
 - **SigMF export** — Export cursor-selected regions with optional bandpass filtering
