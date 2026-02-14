@@ -58,14 +58,52 @@ std::vector<float> CorrelationEngine::crossCorrelate(
     auto planInv = fftwf_plan_dft_1d(fftLen, product, result, FFTW_BACKWARD, FFTW_ESTIMATE);
     fftwf_execute(planInv);
 
-    // Compute magnitudes (full correlation: from no overlap to no overlap)
-    size_t outputLen = signalLen + tmplLen - 1;
-    std::vector<float> output(outputLen);
+    // Compute cumulative energies for O(1) range energy lookup
+    std::vector<float> sigCumEnergy(signalLen + 1, 0.0f);
+    for (size_t i = 0; i < signalLen; i++) {
+        float r = signal[i].real();
+        float im = signal[i].imag();
+        sigCumEnergy[i + 1] = sigCumEnergy[i] + (r * r + im * im);
+    }
+
+    std::vector<float> tmplCumEnergy(tmplLen + 1, 0.0f);
+    for (size_t i = 0; i < tmplLen; i++) {
+        float r = tmpl[i].real();
+        float im = tmpl[i].imag();
+        tmplCumEnergy[i + 1] = tmplCumEnergy[i] + (r * r + im * im);
+    }
+
+    // Prepare full linear output range: lag k from -(tmplLen - 1) to (signalLen - 1)
+    size_t outLen = signalLen + tmplLen - 1;
+    std::vector<float> output(outLen);
     float invN = 1.0f / fftLen;
-    for (size_t i = 0; i < outputLen; i++) {
-        float re = result[i][0] * invN;
-        float im = result[i][1] * invN;
-        output[i] = std::sqrt(re * re + im * im);
+
+    for (size_t i = 0; i < outLen; i++) {
+        // Lag k: - (tmplLen - 1) up to (signalLen - 1)
+        int k = static_cast<int>(i) - (static_cast<int>(tmplLen) - 1);
+        
+        // FFT index for lag k
+        size_t fftIdx = (k >= 0) ? static_cast<size_t>(k) : (fftLen + k);
+        
+        float re = result[fftIdx][0] * invN;
+        float im = result[fftIdx][1] * invN;
+        float mag = std::sqrt(re * re + im * im);
+
+        // Define overlap region
+        int overlapStartSig = std::max(0, k);
+        int overlapEndSig = std::min(static_cast<int>(signalLen), k + static_cast<int>(tmplLen));
+        float eSig = sigCumEnergy[overlapEndSig] - sigCumEnergy[overlapStartSig];
+
+        int overlapStartTmpl = std::max(0, -k);
+        int overlapEndTmpl = std::min(static_cast<int>(tmplLen), static_cast<int>(signalLen) - k);
+        float eTmpl = tmplCumEnergy[overlapEndTmpl] - tmplCumEnergy[overlapStartTmpl];
+
+        float den = std::sqrt(eSig * eTmpl);
+        if (den > 1e-12f) {
+            output[i] = mag / den;
+        } else {
+            output[i] = 0.0f;
+        }
     }
 
     // Cleanup

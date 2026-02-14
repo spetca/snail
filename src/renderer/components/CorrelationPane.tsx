@@ -232,6 +232,12 @@ export function CorrelationPane(): React.ReactElement {
         peakIdx = i
       }
     }
+
+    // In full linear mode, index 0 is lag -(patternLen - 1)
+    // patternLen = totalLags - windowLength + 1
+    const patternLen = totalLags - windowLength + 1
+    const lag = peakIdx - (patternLen - 1)
+
     const peakX = (peakIdx / totalLags) * width
     ctx.strokeStyle = '#FFD700'
     ctx.lineWidth = 1.5
@@ -247,10 +253,10 @@ export function CorrelationPane(): React.ReactElement {
     ctx.fillStyle = '#00e5a0'
     ctx.fillText('|Correlation|', 6, 14)
     ctx.fillStyle = '#FFD700'
-    ctx.fillText(`Peak at lag ${peakIdx}`, 6, 28)
+    ctx.fillText(`Peak at lag ${lag} (rho: ${peakVal.toFixed(3)})`, 6, 28)
     ctx.fillStyle = 'rgba(255,255,255,0.4)'
     ctx.fillText(
-      `Window: ${windowStart}\u2013${windowStart + windowLength} (${windowLength} samples)`,
+      `Full linear slide: [-${patternLen - 1}, +${windowLength - 1}] relative to window ${windowStart}`,
       6, PLOT_HEIGHT - 6
     )
   }, [correlationData, correlationLoading, correlationFilePath, windowStart, windowLength])

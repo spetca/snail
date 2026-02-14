@@ -59,6 +59,8 @@ export function SpectrogramView(): React.ReactElement {
       canvas.style.height = `${height}px`
       rendererRef.current?.resize(width * dpr, height * dpr)
       setViewSize({ width, height })
+      useStore.getState().setViewWidth(width)
+      useStore.getState().setViewHeight(height)
     })
 
     observer.observe(container)
@@ -137,19 +139,20 @@ export function SpectrogramView(): React.ReactElement {
             if (!rawData) return
 
             let data: Float32Array
-            if (rawData instanceof Float32Array) {
-              data = rawData
-            } else if (rawData instanceof ArrayBuffer) {
-              data = new Float32Array(rawData)
-            } else if (rawData.buffer instanceof ArrayBuffer) {
-              data = new Float32Array(rawData.buffer)
+            const dataObj = rawData as any
+            if (dataObj instanceof Float32Array) {
+              data = dataObj
+            } else if (dataObj instanceof ArrayBuffer) {
+              data = new Float32Array(dataObj)
+            } else if (dataObj.buffer instanceof ArrayBuffer) {
+              data = new Float32Array(dataObj.buffer)
             } else {
-              data = new Float32Array(rawData)
+              data = new Float32Array(dataObj)
             }
             if (data.length > 0) {
               renderer.uploadTile(tileKey, data, fftSize)
             }
-          }).catch(() => {})
+          }).catch(() => { })
         ))
 
         if (generationRef.current === generation) {

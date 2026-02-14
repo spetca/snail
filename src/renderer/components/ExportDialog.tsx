@@ -11,8 +11,10 @@ export function ExportDialog({ onClose }: ExportDialogProps): React.ReactElement
   const sampleRate = useStore((s) => s.sampleRate)
   const fftSize = useStore((s) => s.fftSize)
   const zoomLevel = useStore((s) => s.zoomLevel)
+  const pendingExport = useStore((s) => s.pendingExport)
+  const setPendingExport = useStore((s) => s.setPendingExport)
 
-  const [description, setDescription] = useState('')
+  const [description, setDescription] = useState(pendingExport?.comment || '')
   const [author, setAuthor] = useState('')
   const [applyBandpass, setApplyBandpass] = useState(false)
   const [exporting, setExporting] = useState(false)
@@ -21,15 +23,19 @@ export function ExportDialog({ onClose }: ExportDialogProps): React.ReactElement
   if (!fileInfo) return <></>
 
   const samplesPerPixel = fftSize / zoomLevel
-  const startSample = Math.round(Math.min(cursors.x1, cursors.x2) * samplesPerPixel)
-  const endSample = Math.round(Math.max(cursors.x1, cursors.x2) * samplesPerPixel)
+  const startSample = pendingExport ? pendingExport.start : Math.round(Math.min(cursors.x1, cursors.x2) * samplesPerPixel)
+  const endSample = pendingExport ? pendingExport.end : Math.round(Math.max(cursors.x1, cursors.x2) * samplesPerPixel)
+  const isTargetedExport = !!pendingExport
 
   const handleExport = async () => {
     try {
       setExporting(true)
       setError(null)
 
-      const defaultName = fileInfo.path.replace(/\.[^.]+$/, '_export')
+      let defaultName = fileInfo.path.replace(/\.[^.]+$/, '_export')
+      if (pendingExport?.label) {
+        defaultName = pendingExport.label.toLowerCase().replace(/\s+/g, '_')
+      }
       const basePath = await window.snailAPI.showSaveDialog(defaultName)
       if (!basePath) {
         setExporting(false)
@@ -38,16 +44,17 @@ export function ExportDialog({ onClose }: ExportDialogProps): React.ReactElement
 
       const result = await window.snailAPI.exportSigMF({
         outputPath: basePath,
-        startSample: cursors.enabled ? startSample : 0,
-        endSample: cursors.enabled ? endSample : fileInfo.totalSamples,
+        startSample: (cursors.enabled || isTargetedExport) ? startSample : 0,
+        endSample: (cursors.enabled || isTargetedExport) ? endSample : fileInfo.totalSamples,
         description,
         author,
-        applyBandpass,
+        applyBandpass: isTargetedExport ? false : applyBandpass,
         sampleRate,
         centerFrequency: fileInfo.centerFrequency
       })
 
       if (result.success) {
+        setPendingExport(null)
         onClose()
       } else {
         setError(result.error || 'Export failed')
@@ -86,9 +93,9 @@ export function ExportDialog({ onClose }: ExportDialogProps): React.ReactElement
 
         <Field label="Sample Range">
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-            {cursors.enabled
-              ? `${startSample} - ${endSample} (${endSample - startSample} samples)`
-              : `0 - ${fileInfo.totalSamples} (all)`}
+            {(cursors.enabled || isTargetedExport)
+              ? `${startSample.toLocaleString()} - ${endSample.toLocaleString()} (${(endSample - startSample).toLocaleString()} samples)`
+              : `0 - ${fileInfo.totalSamples.toLocaleString()} (all)`}
           </span>
         </Field>
 

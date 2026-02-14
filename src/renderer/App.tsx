@@ -26,8 +26,10 @@ export default function App(): React.ReactElement {
   const yZoomLevel = useStore((s) => s.yZoomLevel)
   const yScrollOffset = useStore((s) => s.yScrollOffset)
   const setYScrollOffset = useStore((s) => s.setYScrollOffset)
-  const [showExport, setShowExport] = React.useState(false)
-  const [showAnnotation, setShowAnnotation] = React.useState(false)
+  const showExport = useStore((s) => s.showExportDialog)
+  const setShowExport = useStore((s) => s.setShowExportDialog)
+  const showAnnotation = useStore((s) => s.showAnnotationDialog)
+  const setShowAnnotation = useStore((s) => s.setShowAnnotationDialog)
 
   const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault()

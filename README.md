@@ -13,7 +13,6 @@
 Snail handles multi-gigabyte recordings with instant load times via memory-mapped I/O and GPU-accelerated spectrogram rendering. Built on the shoulders of giants like [inspectrum](https://github.com/miek/inspectrum), [liquid-dsp](https://github.com/jgaeddert/liquid-dsp), and [FFTW](https://www.fftw.org/).
 
 
-
 ## Snail in a Snail shell
 
 <p align="center"><img src="pics/snail.png" width="100%"></p>

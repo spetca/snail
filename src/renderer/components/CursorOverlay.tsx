@@ -30,6 +30,14 @@ export function CursorOverlay(): React.ReactElement {
   const xAxisMode = useStore((s) => s.xAxisMode)
   const setCursorX = useStore((s) => s.setCursorX)
   const setCursorY = useStore((s) => s.setCursorY)
+  const fileInfo = useStore((s) => s.fileInfo)
+  const viewWidth = useStore((s) => s.viewWidth)
+  const setZoomLevel = useStore((s) => s.setZoomLevel)
+  const setScrollOffset = useStore((s) => s.setScrollOffset)
+  const selectedAnnotationIndex = useStore((s) => s.selectedAnnotationIndex)
+  const setSelectedAnnotationIndex = useStore((s) => s.setSelectedAnnotationIndex)
+  const setPendingExport = useStore((s) => s.setPendingExport)
+  const setShowExportDialog = useStore((s) => s.setShowExportDialog)
 
   // Draw cursors
   useEffect(() => {
@@ -92,8 +100,9 @@ export function CursorOverlay(): React.ReactElement {
       ctx.fillRect(drawX1, drawY1, drawX2 - drawX1, drawY2 - drawY1)
 
       // Border
-      ctx.strokeStyle = color + 'AA'
-      ctx.lineWidth = 1
+      const isSelected = selectedAnnotationIndex === i
+      ctx.strokeStyle = color + (isSelected ? 'FF' : 'AA')
+      ctx.lineWidth = isSelected ? 2 : 1
       ctx.setLineDash([])
       ctx.strokeRect(drawX1, drawY1, drawX2 - drawX1, drawY2 - drawY1)
 
@@ -115,94 +124,116 @@ export function CursorOverlay(): React.ReactElement {
     }
 
     if (cursors.enabled) {
-    const { x1, x2, y1, y2 } = cursors
+      const { x1, x2, y1, y2 } = cursors
 
-    // Selection fill
-    if (x1 !== x2 && y1 !== y2) {
-      ctx.fillStyle = 'rgba(0, 212, 170, 0.08)'
-      ctx.fillRect(
-        Math.min(x1, x2), Math.min(y1, y2),
-        Math.abs(x2 - x1), Math.abs(y2 - y1)
-      )
-    }
+      // Selection fill
+      if (x1 !== x2 && y1 !== y2) {
+        ctx.fillStyle = 'rgba(0, 212, 170, 0.08)'
+        ctx.fillRect(
+          Math.min(x1, x2), Math.min(y1, y2),
+          Math.abs(x2 - x1), Math.abs(y2 - y1)
+        )
+      }
 
-    // Vertical cursors (solid)
-    ctx.strokeStyle = '#ffffff'
-    ctx.lineWidth = 1
-    ctx.setLineDash([])
-    for (const x of [x1, x2]) {
-      ctx.beginPath()
-      ctx.moveTo(x, 0)
-      ctx.lineTo(x, rect.height)
-      ctx.stroke()
-    }
+      // Vertical cursors (solid)
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 1
+      ctx.setLineDash([])
+      for (const x of [x1, x2]) {
+        ctx.beginPath()
+        ctx.moveTo(x, 0)
+        ctx.lineTo(x, rect.height)
+        ctx.stroke()
+      }
 
-    // Horizontal cursors (dashed)
-    ctx.setLineDash([4, 4])
-    for (const y of [y1, y2]) {
-      ctx.beginPath()
-      ctx.moveTo(0, y)
-      ctx.lineTo(rect.width, y)
-      ctx.stroke()
-    }
-    ctx.setLineDash([])
+      // Horizontal cursors (dashed)
+      ctx.setLineDash([4, 4])
+      for (const y of [y1, y2]) {
+        ctx.beginPath()
+        ctx.moveTo(0, y)
+        ctx.lineTo(rect.width, y)
+        ctx.stroke()
+      }
+      ctx.setLineDash([])
 
-    // Measurements label
-    const samplesPerPixel = fftSize / zoomLevel
-    const sampleDelta = Math.abs(x2 - x1) * samplesPerPixel
-    const timeDelta = sampleDelta / sampleRate
+      // Measurements label
+      const samplesPerPixel = fftSize / zoomLevel
+      const sampleDelta = Math.abs(x2 - x1) * samplesPerPixel
+      const timeDelta = sampleDelta / sampleRate
 
-    const freqTop = (0.5 - Math.min(y1, y2) / rect.height) * sampleRate
-    const freqBot = (0.5 - Math.max(y1, y2) / rect.height) * sampleRate
-    const bandwidth = Math.abs(freqTop - freqBot)
+      const freqTop = (0.5 - Math.min(y1, y2) / rect.height) * sampleRate
+      const freqBot = (0.5 - Math.max(y1, y2) / rect.height) * sampleRate
+      const bandwidth = Math.abs(freqTop - freqBot)
 
-    ctx.font = '11px "JetBrains Mono", monospace'
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'
-    const labelX = Math.max(x1, x2) + 8
-    const labelY = Math.min(y1, y2) - 8
-
-    const labels = [
-      xAxisMode === 'time'
-        ? `\u0394t: ${formatTimeValue(timeDelta)}`
-        : `\u0394n: ${Math.round(sampleDelta)}`,
-      `BW: ${formatFrequency(bandwidth)}`
-    ]
-
-    labels.forEach((label, i) => {
-      const textWidth = ctx.measureText(label).width
+      ctx.font = '11px "JetBrains Mono", monospace'
       ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'
-      ctx.fillRect(labelX - 2, labelY + i * 16 - 11, textWidth + 4, 14)
-      ctx.fillStyle = '#00d4aa'
-      ctx.fillText(label, labelX, labelY + i * 16)
-    })
+      const labelX = Math.max(x1, x2) + 8
+      const labelY = Math.min(y1, y2) - 8
 
-    // Draw yellow triangle grabbers on top
+      const labels = [
+        xAxisMode === 'time'
+          ? `\u0394t: ${formatTimeValue(timeDelta)}`
+          : `\u0394n: ${Math.round(sampleDelta)}`,
+        `BW: ${formatFrequency(bandwidth)}`
+      ]
 
-    // X cursors: downward-pointing triangles at top edge
-    for (const [key, x] of [['x1', x1], ['x2', x2]] as const) {
-      const isHovered = hoverTarget === key
-      ctx.fillStyle = isHovered ? TRI_HOVER : TRI_COLOR
-      ctx.beginPath()
-      ctx.moveTo(x - TRI_W / 2, 0)
-      ctx.lineTo(x + TRI_W / 2, 0)
-      ctx.lineTo(x, TRI_H)
-      ctx.closePath()
-      ctx.fill()
-    }
+      labels.forEach((label, i) => {
+        const textWidth = ctx.measureText(label).width
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'
+        ctx.fillRect(labelX - 2, labelY + i * 16 - 11, textWidth + 4, 14)
+        ctx.fillStyle = '#00d4aa'
+        ctx.fillText(label, labelX, labelY + i * 16)
+      })
 
-    // Y cursors: left-pointing triangles at right edge
-    for (const [key, y] of [['y1', y1], ['y2', y2]] as const) {
-      const isHovered = hoverTarget === key
-      ctx.fillStyle = isHovered ? TRI_HOVER : TRI_COLOR
-      ctx.beginPath()
-      ctx.moveTo(rect.width, y - TRI_W / 2)
-      ctx.lineTo(rect.width, y + TRI_W / 2)
-      ctx.lineTo(rect.width - TRI_H, y)
-      ctx.closePath()
-      ctx.fill()
-    }
+      // Draw yellow triangle grabbers on top
+
+      // X cursors: downward-pointing triangles at top edge + absolute label
+      for (const [key, x] of [['x1', x1], ['x2', x2]] as const) {
+        const isHovered = hoverTarget === key
+        ctx.fillStyle = isHovered ? TRI_HOVER : TRI_COLOR
+        ctx.beginPath()
+        ctx.moveTo(x - TRI_W / 2, 0)
+        ctx.lineTo(x + TRI_W / 2, 0)
+        ctx.lineTo(x, TRI_H)
+        ctx.closePath()
+        ctx.fill()
+
+        // Absolute label for X
+        const sampleVal = Math.round(x * samplesPerPixel + scrollOffset)
+        const label = xAxisMode === 'time' ? formatTimeValue(sampleVal / sampleRate) : sampleVal.toLocaleString()
+        ctx.font = '10px "JetBrains Mono", monospace'
+        const tw = ctx.measureText(label).width
+        const lx = Math.max(2, Math.min(rect.width - tw - 6, x - tw / 2 - 3))
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'
+        ctx.fillRect(lx, TRI_H + 2, tw + 6, 14)
+        ctx.fillStyle = TRI_COLOR
+        ctx.fillText(label, lx + 3, TRI_H + 13)
+      }
+
+      // Y cursors: left-pointing triangles at right edge + absolute label
+      for (const [key, y] of [['y1', y1], ['y2', y2]] as const) {
+        const isHovered = hoverTarget === key
+        ctx.fillStyle = isHovered ? TRI_HOVER : TRI_COLOR
+        ctx.beginPath()
+        ctx.moveTo(rect.width, y - TRI_W / 2)
+        ctx.lineTo(rect.width, y + TRI_W / 2)
+        ctx.lineTo(rect.width - TRI_H, y)
+        ctx.closePath()
+        ctx.fill()
+
+        // Absolute label for Y
+        const freqVal = (0.5 - y / rect.height) * sampleRate
+        const label = formatFrequency(freqVal)
+        ctx.font = '10px "JetBrains Mono", monospace'
+        const tw = ctx.measureText(label).width
+        const ly = Math.max(14, Math.min(rect.height - 4, y + 4))
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'
+        ctx.fillRect(rect.width - TRI_H - tw - 12, y - 7, tw + 6, 14)
+        ctx.fillStyle = TRI_COLOR
+        ctx.fillText(label, rect.width - TRI_H - tw - 9, y + 4)
+      }
     } // end if (cursors.enabled)
-  }, [cursors, annotations, fftSize, zoomLevel, sampleRate, scrollOffset, xAxisMode, yZoomLevel, yScrollOffset, hoverTarget])
+  }, [cursors, annotations, fftSize, zoomLevel, sampleRate, scrollOffset, xAxisMode, yZoomLevel, yScrollOffset, hoverTarget, selectedAnnotationIndex])
 
   const hitTestTriangle = useCallback((mx: number, my: number): DragTarget => {
     const container = containerRef.current
@@ -226,6 +257,42 @@ export function CursorOverlay(): React.ReactElement {
 
     return null
   }, [cursors])
+
+  const hitTestAnnotation = useCallback((mx: number, my: number): number | null => {
+    const container = containerRef.current
+    if (!container) return null
+    const rect = container.getBoundingClientRect()
+
+    const samplesPerPx = fftSize / zoomLevel
+    const totalBins = fftSize / 2
+    const yScrollBins = yScrollOffset / totalBins
+
+    // Reverse order so top-most (last drawn) annotations are hit first
+    for (let i = annotations.length - 1; i >= 0; i--) {
+      const ann = annotations[i]
+      const ax1 = (ann.sampleStart - scrollOffset) / samplesPerPx
+      const ax2 = (ann.sampleStart + ann.sampleCount - scrollOffset) / samplesPerPx
+
+      let ay1: number, ay2: number
+      if (ann.freqLowerEdge != null && ann.freqUpperEdge != null) {
+        const normTop = 0.5 - ann.freqUpperEdge / sampleRate
+        const normBot = 0.5 - ann.freqLowerEdge / sampleRate
+        ay1 = ((normTop - yScrollBins) * yZoomLevel) * rect.height
+        ay2 = ((normBot - yScrollBins) * yZoomLevel) * rect.height
+      } else {
+        ay1 = 0
+        ay2 = rect.height
+      }
+
+      const minX = Math.min(ax1, ax2), maxX = Math.max(ax1, ax2)
+      const minY = Math.min(ay1, ay2), maxY = Math.max(ay1, ay2)
+
+      if (mx >= minX && mx <= maxX && my >= minY && my <= maxY) {
+        return i
+      }
+    }
+    return null
+  }, [annotations, fftSize, zoomLevel, scrollOffset, yScrollOffset, yZoomLevel, sampleRate])
 
   const findTarget = useCallback((x: number, y: number): DragTarget => {
     // Check triangles first (easier to grab)
@@ -264,14 +331,36 @@ export function CursorOverlay(): React.ReactElement {
     if (target) {
       setDragging(target)
       setDragStart({ x, y })
+      setSelectedAnnotationIndex(null) // deselect when interacting with cursors
     } else {
-      // Start new selection
-      setCursorX(x, x)
-      setCursorY(y, y)
-      setDragging('x2')
-      setDragStart({ x, y })
+      // Check for annotation click
+      const annIdx = hitTestAnnotation(x, y)
+      if (annIdx !== null) {
+        setSelectedAnnotationIndex(annIdx)
+        // Auto-zoom to center the annotation
+        const ann = annotations[annIdx]
+        if (ann && fileInfo) {
+          const targetZoom = Math.round((viewWidth * fftSize * 0.8) / ann.sampleCount)
+          const newZoom = Math.max(1, Math.min(fftSize, targetZoom))
+          setZoomLevel(newZoom)
+
+          const newStride = fftSize / newZoom
+          const centerSample = ann.sampleStart + ann.sampleCount / 2
+          const viewSamples = viewWidth * newStride
+          const newOffset = centerSample - viewSamples / 2
+          const maxOffset = Math.max(0, fileInfo.totalSamples - fftSize)
+          setScrollOffset(Math.max(0, Math.min(maxOffset, Math.round(newOffset))))
+        }
+      } else {
+        // Start new selection
+        setCursorX(x, x)
+        setCursorY(y, y)
+        setDragging('x2')
+        setDragStart({ x, y })
+        setSelectedAnnotationIndex(null)
+      }
     }
-  }, [cursors.enabled, findTarget, setCursorX, setCursorY])
+  }, [cursors.enabled, findTarget, hitTestAnnotation, annotations, fileInfo, fftSize, viewWidth, setCursorX, setCursorY, setZoomLevel, setScrollOffset, setSelectedAnnotationIndex])
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
@@ -312,6 +401,8 @@ export function CursorOverlay(): React.ReactElement {
 
   if (!cursors.enabled && annotations.length === 0) return <></>
 
+  const selectedAnn = selectedAnnotationIndex !== null ? annotations[selectedAnnotationIndex] : null
+
   return (
     <div
       ref={containerRef}
@@ -332,6 +423,99 @@ export function CursorOverlay(): React.ReactElement {
       onMouseLeave={handleMouseLeave}
     >
       <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
+
+      {selectedAnn && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 20,
+            right: 20,
+            width: 240,
+            background: 'var(--bg3)',
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+            padding: 16,
+            zIndex: 20,
+            pointerEvents: 'auto',
+            animation: 'slideIn 0.2s ease-out'
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+            <div style={{ fontWeight: 600, fontSize: 14 }}>{selectedAnn.label || 'Annotation'}</div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                setSelectedAnnotationIndex(null)
+              }}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: 'var(--text-muted)',
+                cursor: 'pointer',
+                padding: 4,
+                lineHeight: 1
+              }}
+            >
+              ×
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <DetailRow label="Samples" value={`${selectedAnn.sampleStart.toLocaleString()} - ${(selectedAnn.sampleStart + selectedAnn.sampleCount).toLocaleString()}`} />
+            <DetailRow label="Duration" value={formatTimeValue(selectedAnn.sampleCount / sampleRate)} />
+            {selectedAnn.freqLowerEdge != null && (
+              <DetailRow label="Frequency" value={`${formatFrequency(selectedAnn.freqLowerEdge)} to ${formatFrequency(selectedAnn.freqUpperEdge!)}`} />
+            )}
+            {selectedAnn.comment && (
+              <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)', fontSize: 12, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>
+                {selectedAnn.comment}
+              </div>
+            )}
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                setPendingExport({
+                  start: selectedAnn.sampleStart,
+                  end: selectedAnn.sampleStart + selectedAnn.sampleCount,
+                  label: selectedAnn.label,
+                  comment: selectedAnn.comment
+                })
+                setShowExportDialog(true)
+              }}
+              style={{
+                marginTop: 8,
+                width: '100%',
+                padding: '6px 0',
+                fontSize: 11,
+                fontWeight: 600,
+                background: 'var(--accent)',
+                color: '#000',
+                border: 'none',
+                borderRadius: 4,
+                cursor: 'pointer'
+              }}
+            >
+              Export as SigMF
+            </button>
+          </div>
+        </div>
+      )}
+      <style>{`
+        @keyframes slideIn {
+          from { transform: translateX(20px); opacity: 0; }
+          to { transform: translateX(0); opacity: 1; }
+        }
+      `}</style>
+    </div>
+  )
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+      <span style={{ color: 'var(--text-muted)' }}>{label}</span>
+      <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text)', textAlign: 'right' }}>{value}</span>
     </div>
   )
 }

@@ -1,5 +1,8 @@
 import React from 'react'
 import { useStore, type XAxisMode } from '../state/store'
+import type { SigMFAnnotation } from '../../shared/sample-formats'
+
+const ANNOTATION_COLORS = ['#FF6B6B', '#4DABF7', '#51CF66', '#FFD43B', '#CC5DE8', '#FF922B']
 
 const FFT_SIZES = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
 
@@ -12,6 +15,10 @@ export function ControlsPanel(): React.ReactElement {
   const sampleRate = useStore((s) => s.sampleRate)
   const xAxisMode = useStore((s) => s.xAxisMode)
   const cursorsEnabled = useStore((s) => s.cursors.enabled)
+  const annotations = useStore((s) => s.annotations)
+  const viewWidth = useStore((s) => s.viewWidth)
+  const selectedAnnotationIndex = useStore((s) => s.selectedAnnotationIndex)
+  const setSelectedAnnotationIndex = useStore((s) => s.setSelectedAnnotationIndex)
 
   const setFFTSize = useStore((s) => s.setFFTSize)
   const setZoomLevel = useStore((s) => s.setZoomLevel)
@@ -20,6 +27,22 @@ export function ControlsPanel(): React.ReactElement {
   const setSampleRate = useStore((s) => s.setSampleRate)
   const setXAxisMode = useStore((s) => s.setXAxisMode)
   const setCursorsEnabled = useStore((s) => s.setCursorsEnabled)
+  const setScrollOffset = useStore((s) => s.setScrollOffset)
+
+  const handleAnnotationClick = (ann: SigMFAnnotation) => {
+    if (!fileInfo) return
+    // Zoom so annotation fills ~80% of the viewport width
+    const targetZoom = Math.round((viewWidth * fftSize * 0.8) / ann.sampleCount)
+    const newZoom = Math.max(1, Math.min(fftSize, targetZoom))
+    setZoomLevel(newZoom)
+
+    const newStride = fftSize / newZoom
+    const centerSample = ann.sampleStart + ann.sampleCount / 2
+    const viewSamples = viewWidth * newStride
+    const newOffset = centerSample - viewSamples / 2
+    const maxOffset = Math.max(0, fileInfo.totalSamples - fftSize)
+    setScrollOffset(Math.max(0, Math.min(maxOffset, Math.round(newOffset))))
+  }
 
   return (
     <div
@@ -134,6 +157,51 @@ export function ControlsPanel(): React.ReactElement {
           {fileInfo.centerFrequency && (
             <InfoRow label="Center" value={`${(fileInfo.centerFrequency / 1e6).toFixed(3)} MHz`} />
           )}
+        </Section>
+      )}
+
+      {annotations.length > 0 && (
+        <Section title="Annotations">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {annotations.map((ann, i) => {
+              const color = ANNOTATION_COLORS[i % ANNOTATION_COLORS.length]
+              const isSelected = selectedAnnotationIndex === i
+              return (
+                <div
+                  key={i}
+                  onClick={() => {
+                    handleAnnotationClick(ann)
+                    setSelectedAnnotationIndex(i)
+                  }}
+                  style={{
+                    padding: '6px 8px',
+                    background: isSelected ? `${color}33` : 'var(--bg3)',
+                    border: `1px solid ${isSelected ? color : color + '44'}`,
+                    borderRadius: 4,
+                    cursor: 'pointer',
+                    fontSize: 11,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 2,
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isSelected) e.currentTarget.style.borderColor = color
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isSelected) e.currentTarget.style.borderColor = `${color}44`
+                  }}
+                >
+                  <div style={{ fontWeight: 600, color: 'var(--text)' }}>
+                    {ann.label || `Annotation ${i + 1}`}
+                  </div>
+                  <div style={{ color: 'var(--text-muted)', fontSize: 10, fontFamily: 'var(--font-mono)' }}>
+                    S: {ann.sampleStart.toLocaleString()} ({ann.sampleCount.toLocaleString()})
+                  </div>
+                </div>
+              )
+            })}
+          </div>
         </Section>
       )}
     </div>
