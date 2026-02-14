@@ -12,13 +12,12 @@ A fast, cross-platform IQ file analyzer built for RF engineers and signal proces
 
 ## Snail in a Snail shell
 
-<p align="center"><img src="/pics/snail.png" width="200"></p>
+<p align="center"><img src="pics/snail.png" width="100%"></p>
 
 
 - **Instant file loading** — Memory-mapped I/O opens gigabyte-scale files in milliseconds
-- **WebGL spectrogram** — GPU-rendered tiled spectrogram with real-time pan and zoom
+- **SigMF support + annotation** — Reads `.sigmf-meta` + `.sigmf-data` pairs, auto-detects sample rate and center frequency, add annotations time and frequency (boxes)!
 - **11 IQ formats** — cf32, cf64, cs32, cs16, cs8, cu8, rf32, rf64, rs16, rs8, ru8
-- **SigMF support** — Reads `.sigmf-meta` + `.sigmf-data` pairs, auto-detects sample rate and center frequency, add annotations time and frequency (boxes)!
 - **Dual-axis cursors** — Measure time/sample deltas and frequency/bandwidth
 - **I/Q trace plot** — Time-domain waveform view synced with the spectrogram
 - **SigMF export** — Export cursor-selected regions with optional bandpass filtering
@@ -81,29 +80,6 @@ Output binaries will be in `dist/`. The packager produces:
 
 Snail auto-detects the format from the file extension. For SigMF files, open either the `.sigmf-meta` or `.sigmf-data` — Snail finds the partner file automatically.
 
-### Navigation
-
-| Action | Input |
-|---|---|
-| Scroll (pan in time) | Scroll wheel / two-finger swipe |
-| Zoom | Ctrl + scroll wheel / pinch gesture |
-| Zoom anchors to cursor | Automatic — zooms toward mouse position |
-
-### Controls Panel
-
-- **Sample Rate** — Set the sample rate (auto-filled from SigMF metadata)
-- **FFT Size** — Powers of 2 from 16 to 8192. Larger = better frequency resolution, less time resolution
-- **Zoom** — 1x to 16x magnification
-- **Power (dB)** — Adjust min/max to control colormap contrast
-- **X Axis** — Toggle between sample indices and time (seconds/ms/μs)
-- **Cursors** — Enable dual-axis measurement cursors
-
-### Cursors
-
-When enabled, click and drag to place vertical (time) and horizontal (frequency) cursors. The overlay shows:
-- Sample count between cursors (Δn)
-- Bandwidth between frequency cursors (BW)
-
 ### SigMF Export
 
 1. Place cursors around the region of interest
@@ -111,6 +87,13 @@ When enabled, click and drag to place vertical (time) and horizontal (frequency)
 3. Optionally apply a bandpass filter using the frequency cursor range
 4. Set filename, description, and author
 5. Exports a `.sigmf-data` + `.sigmf-meta` pair
+
+### Annotate SigMF
+
+1. Enable **Cursors** and drag to select a time/frequency region
+2. Click **Add Annotation** in the toolbar (or use `Ctrl+A`)
+3. Enter a label and optional comment
+4. The annotation is saved directly to the `.sigmf-meta` file and rendered as a persistent colored box on the spectrogram
 
 ### Correlation
 
@@ -176,8 +159,3 @@ src/
 
 **Native DSP** — FFTW for FFT computation, liquid-dsp for FIR bandpass filters, POSIX mmap for zero-copy file access. All heavy computation runs in async worker threads.
 
-**WebGL Rendering** — Tiled R32F textures with on-demand computation. LRU cache (256 tiles). Colormap via 1D texture lookup.
-
-## License
-
-MIT
