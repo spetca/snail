@@ -15,8 +15,12 @@ export function CorrelationDialog({ onClose }: CorrelationDialogProps): React.Re
   const cursors = useStore((s) => s.cursors)
   const fftSize = useStore((s) => s.fftSize)
   const zoomLevel = useStore((s) => s.zoomLevel)
+  const scrollOffset = useStore((s) => s.scrollOffset)
   const setCorrelationData = useStore((s) => s.setCorrelationData)
   const setCorrelationLoading = useStore((s) => s.setCorrelationLoading)
+  const setCorrelationPaneVisible = useStore((s) => s.setCorrelationPaneVisible)
+  const setCorrelationStartSample = useStore((s) => s.setCorrelationStartSample)
+  const setCorrelationLag = useStore((s) => s.setCorrelationLag)
 
   const [format, setFormat] = useState<SampleFormat>('cf32')
   const [error, setError] = useState<string | null>(null)
@@ -47,6 +51,9 @@ export function CorrelationDialog({ onClose }: CorrelationDialogProps): React.Re
       })
 
       setCorrelationData(result)
+      setCorrelationStartSample(scrollOffset)
+      setCorrelationLag(0)
+      setCorrelationPaneVisible(true)
       onClose()
     } catch (err: any) {
       setError(err.message)

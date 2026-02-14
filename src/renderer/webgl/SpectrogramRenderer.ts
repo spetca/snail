@@ -28,14 +28,21 @@ uniform sampler2D u_tile;
 uniform sampler2D u_colormap;
 uniform float u_powerMin;
 uniform float u_powerMax;
+uniform float u_yZoom;
+uniform float u_yOffset;
 void main() {
-  // v_texCoord.x = normalized time position within tile (0=first line, 1=last line)
-  // v_texCoord.y = normalized frequency (0=top of screen=high freq, 1=bottom=low freq)
-  // Texture: X=freq bin, Y=time line
-  // Flip freq so 0=bottom freq bin (low), 1=top (high) -> screen top should be high freq
-  vec2 tileUV = vec2(1.0 - v_texCoord.y, v_texCoord.x);
+  // v_texCoord.y is screen freq (0=top, 1=bottom)
+  // Apply Y zoom and scroll: map visible sub-range to full texture
+  float freqNorm = u_yOffset + v_texCoord.y / u_yZoom;
+
+  // Discard pixels outside the valid frequency range
+  if (freqNorm < 0.0 || freqNorm > 1.0) {
+    gl_FragColor = vec4(0.02, 0.035, 0.06, 1.0);
+    return;
+  }
+
+  vec2 tileUV = vec2(1.0 - freqNorm, v_texCoord.x);
   float power = texture2D(u_tile, tileUV).r;
-  // Map: powerMin -> 0 (dark), powerMax -> 1 (bright)
   float normalized = (power - u_powerMin) / (u_powerMax - u_powerMin);
   normalized = clamp(normalized, 0.0, 1.0);
   vec4 color = texture2D(u_colormap, vec2(normalized, 0.5));
@@ -50,6 +57,8 @@ export interface RenderParams {
   powerMin: number
   powerMax: number
   totalSamples: number
+  yZoomLevel?: number
+  yScrollOffset?: number
 }
 
 export class SpectrogramRenderer {
@@ -69,6 +78,8 @@ export class SpectrogramRenderer {
   private uColormap: WebGLUniformLocation | null = null
   private uPowerMin: WebGLUniformLocation | null = null
   private uPowerMax: WebGLUniformLocation | null = null
+  private uYZoom: WebGLUniformLocation | null = null
+  private uYOffset: WebGLUniformLocation | null = null
 
   constructor(canvas: HTMLCanvasElement) {
     const gl = canvas.getContext('webgl2', { antialias: false, alpha: false })
@@ -104,6 +115,8 @@ export class SpectrogramRenderer {
     this.uColormap = gl.getUniformLocation(this.program, 'u_colormap')
     this.uPowerMin = gl.getUniformLocation(this.program, 'u_powerMin')
     this.uPowerMax = gl.getUniformLocation(this.program, 'u_powerMax')
+    this.uYZoom = gl.getUniformLocation(this.program, 'u_yZoom')
+    this.uYOffset = gl.getUniformLocation(this.program, 'u_yOffset')
 
     this.posBuffer = gl.createBuffer()!
     this.texBuffer = gl.createBuffer()!
@@ -178,6 +191,12 @@ export class SpectrogramRenderer {
 
     gl.uniform1f(this.uPowerMin, params.powerMin)
     gl.uniform1f(this.uPowerMax, params.powerMax)
+
+    // Y-axis zoom: yScrollOffset is in normalized [0,1) range
+    const yZoom = params.yZoomLevel ?? 1
+    const yOffset = params.yScrollOffset ?? 0
+    gl.uniform1f(this.uYZoom, yZoom)
+    gl.uniform1f(this.uYOffset, yOffset)
 
     gl.activeTexture(gl.TEXTURE1)
     gl.bindTexture(gl.TEXTURE_2D, this.colormapTexture)

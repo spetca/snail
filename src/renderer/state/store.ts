@@ -26,12 +26,21 @@ export interface AppState {
   xAxisMode: XAxisMode
   sampleRate: number
 
+  // Y-axis zoom
+  yZoomLevel: number
+  yScrollOffset: number
+
   // Cursors
   cursors: CursorState
 
   // Correlation
   correlationData: Float32Array | null
   correlationLoading: boolean
+
+  // Correlation pane
+  correlationPaneVisible: boolean
+  correlationStartSample: number
+  correlationLag: number
 
   // Actions
   setFileInfo: (info: FileInfo | null) => void
@@ -44,11 +53,16 @@ export interface AppState {
   setScrollOffset: (offset: number) => void
   setXAxisMode: (mode: XAxisMode) => void
   setSampleRate: (rate: number) => void
+  setYZoomLevel: (zoom: number) => void
+  setYScrollOffset: (offset: number) => void
   setCursorsEnabled: (enabled: boolean) => void
   setCursorX: (x1: number, x2: number) => void
   setCursorY: (y1: number, y2: number) => void
   setCorrelationData: (data: Float32Array | null) => void
   setCorrelationLoading: (loading: boolean) => void
+  setCorrelationPaneVisible: (visible: boolean) => void
+  setCorrelationStartSample: (sample: number) => void
+  setCorrelationLag: (lag: number) => void
   reset: () => void
 }
 
@@ -63,9 +77,14 @@ const initialState = {
   scrollOffset: 0,
   xAxisMode: 'samples' as XAxisMode,
   sampleRate: 1000000,
+  yZoomLevel: 1,
+  yScrollOffset: 0,
   cursors: { enabled: false, x1: 0, x2: 0, y1: 0, y2: 0 },
   correlationData: null,
-  correlationLoading: false
+  correlationLoading: false,
+  correlationPaneVisible: false,
+  correlationStartSample: 0,
+  correlationLag: 0
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -85,6 +104,8 @@ export const useStore = create<AppState>((set) => ({
   setScrollOffset: (scrollOffset) => set({ scrollOffset }),
   setXAxisMode: (xAxisMode) => set({ xAxisMode }),
   setSampleRate: (sampleRate) => set({ sampleRate }),
+  setYZoomLevel: (yZoomLevel) => set({ yZoomLevel }),
+  setYScrollOffset: (yScrollOffset) => set({ yScrollOffset }),
   setCursorsEnabled: (enabled) => set((s) => ({
     cursors: { ...s.cursors, enabled }
   })),
@@ -96,5 +117,8 @@ export const useStore = create<AppState>((set) => ({
   })),
   setCorrelationData: (correlationData) => set({ correlationData }),
   setCorrelationLoading: (correlationLoading) => set({ correlationLoading }),
+  setCorrelationPaneVisible: (correlationPaneVisible) => set({ correlationPaneVisible }),
+  setCorrelationStartSample: (correlationStartSample) => set({ correlationStartSample }),
+  setCorrelationLag: (correlationLag) => set({ correlationLag }),
   reset: () => set(initialState)
 }))

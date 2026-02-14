@@ -20,6 +20,10 @@ export function SpectrogramView(): React.ReactElement {
   const scrollOffset = useStore((s) => s.scrollOffset)
   const setScrollOffset = useStore((s) => s.setScrollOffset)
   const setZoomLevel = useStore((s) => s.setZoomLevel)
+  const yZoomLevel = useStore((s) => s.yZoomLevel)
+  const yScrollOffset = useStore((s) => s.yScrollOffset)
+  const setYZoomLevel = useStore((s) => s.setYZoomLevel)
+  const setYScrollOffset = useStore((s) => s.setYScrollOffset)
 
   // Initialize WebGL renderer
   useEffect(() => {
@@ -61,6 +65,16 @@ export function SpectrogramView(): React.ReactElement {
     return () => observer.disconnect()
   }, [])
 
+  // Auto-fill: zoom so signal spans the full viewport width on file load
+  useEffect(() => {
+    if (!fileInfo || viewSize.width === 0) return
+    // stride = fftSize / zoom, viewSamples = viewWidth * stride
+    // For fill: viewSamples <= totalSamples → zoom >= fftSize * viewWidth / totalSamples
+    const fillZoom = Math.ceil(fftSize * viewSize.width / fileInfo.totalSamples)
+    setZoomLevel(Math.max(1, Math.min(fftSize, fillZoom)))
+    setScrollOffset(0)
+  }, [fileInfo]) // only on new file, not on every resize/fftSize change
+
   // Render spectrogram
   useEffect(() => {
     if (!fileInfo || !rendererRef.current) return
@@ -86,7 +100,9 @@ export function SpectrogramView(): React.ReactElement {
       zoomLevel,
       powerMin,
       powerMax,
-      totalSamples: fileInfo.totalSamples
+      totalSamples: fileInfo.totalSamples,
+      yZoomLevel,
+      yScrollOffset: yScrollOffset / (fftSize / 2)
     }
 
     // Always render immediately with cached tiles
@@ -143,20 +159,35 @@ export function SpectrogramView(): React.ReactElement {
     }
 
     loadTiles()
-  }, [fileInfo, fftSize, zoomLevel, powerMin, powerMax, scrollOffset, viewSize])
+  }, [fileInfo, fftSize, zoomLevel, powerMin, powerMax, scrollOffset, viewSize, yZoomLevel, yScrollOffset])
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     if (!fileInfo) return
 
-    if (e.ctrlKey || e.metaKey) {
+    if (e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      // Shift+wheel: Y-axis zoom (frequency)
+      e.preventDefault()
+      const factor = e.deltaY > 0 ? 1 / 1.25 : 1.25
+      const maxYZoom = fftSize / 2
+      const newYZoom = Math.max(1, Math.min(maxYZoom, Math.round(yZoomLevel * factor)))
+      if (newYZoom === yZoomLevel) return
+
+      // Clamp Y scroll offset
+      const totalBins = fftSize / 2
+      const visibleBins = totalBins / newYZoom
+      const maxYScroll = totalBins - visibleBins
+      setYZoomLevel(newYZoom)
+      setYScrollOffset(Math.max(0, Math.min(maxYScroll, yScrollOffset)))
+    } else if (e.ctrlKey || e.metaKey) {
       // Smart zoom: keep the sample under the cursor fixed
       e.preventDefault()
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
       const mouseX = e.clientX - rect.left // CSS pixels from left edge
 
       const oldStride = fftSize / zoomLevel
-      const delta = e.deltaY > 0 ? -1 : 1
-      const newZoom = Math.max(1, Math.min(16, zoomLevel + delta))
+      // Multiplicative zoom: each scroll step scales by ~1.25x, snapped to integer
+      const factor = e.deltaY > 0 ? 1 / 1.25 : 1.25
+      const newZoom = Math.max(1, Math.min(fftSize, Math.round(zoomLevel * factor)))
       if (newZoom === zoomLevel) return
 
       const newStride = fftSize / newZoom
@@ -176,7 +207,7 @@ export function SpectrogramView(): React.ReactElement {
       const newOffset = Math.max(0, Math.min(maxOffset, scrollOffset + scrollDelta))
       setScrollOffset(newOffset)
     }
-  }, [fileInfo, fftSize, zoomLevel, scrollOffset, setScrollOffset, setZoomLevel])
+  }, [fileInfo, fftSize, zoomLevel, scrollOffset, setScrollOffset, setZoomLevel, yZoomLevel, yScrollOffset, setYZoomLevel, setYScrollOffset])
 
   return (
     <div

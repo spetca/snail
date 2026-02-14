@@ -3,6 +3,10 @@ import { useStore } from '../state/store'
 import { formatTimeValue, formatFrequency } from '../../shared/units'
 
 const GRAB_THRESHOLD = 10
+const TRI_W = 16
+const TRI_H = 12
+const TRI_COLOR = '#FFD700'
+const TRI_HOVER = '#FFE44D'
 
 type DragTarget = 'x1' | 'x2' | 'y1' | 'y2' | 'all' | null
 
@@ -11,6 +15,7 @@ export function CursorOverlay(): React.ReactElement {
   const containerRef = useRef<HTMLDivElement>(null)
   const [dragging, setDragging] = useState<DragTarget>(null)
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
+  const [hoverTarget, setHoverTarget] = useState<DragTarget>(null)
 
   const cursors = useStore((s) => s.cursors)
   const sampleRate = useStore((s) => s.sampleRate)
@@ -100,9 +105,62 @@ export function CursorOverlay(): React.ReactElement {
       ctx.fillStyle = '#00d4aa'
       ctx.fillText(label, labelX, labelY + i * 16)
     })
-  }, [cursors, fftSize, zoomLevel, sampleRate, scrollOffset, xAxisMode])
+
+    // Draw yellow triangle grabbers on top
+
+    // X cursors: downward-pointing triangles at top edge
+    for (const [key, x] of [['x1', x1], ['x2', x2]] as const) {
+      const isHovered = hoverTarget === key
+      ctx.fillStyle = isHovered ? TRI_HOVER : TRI_COLOR
+      ctx.beginPath()
+      ctx.moveTo(x - TRI_W / 2, 0)
+      ctx.lineTo(x + TRI_W / 2, 0)
+      ctx.lineTo(x, TRI_H)
+      ctx.closePath()
+      ctx.fill()
+    }
+
+    // Y cursors: left-pointing triangles at right edge
+    for (const [key, y] of [['y1', y1], ['y2', y2]] as const) {
+      const isHovered = hoverTarget === key
+      ctx.fillStyle = isHovered ? TRI_HOVER : TRI_COLOR
+      ctx.beginPath()
+      ctx.moveTo(rect.width, y - TRI_W / 2)
+      ctx.lineTo(rect.width, y + TRI_W / 2)
+      ctx.lineTo(rect.width - TRI_H, y)
+      ctx.closePath()
+      ctx.fill()
+    }
+  }, [cursors, fftSize, zoomLevel, sampleRate, scrollOffset, xAxisMode, hoverTarget])
+
+  const hitTestTriangle = useCallback((mx: number, my: number): DragTarget => {
+    const container = containerRef.current
+    if (!container) return null
+    const rect = container.getBoundingClientRect()
+    const { x1, x2, y1, y2 } = cursors
+
+    // X cursor triangles (top edge, downward-pointing)
+    for (const [key, x] of [['x1', x1], ['x2', x2]] as const) {
+      if (mx >= x - TRI_W / 2 && mx <= x + TRI_W / 2 && my >= 0 && my <= TRI_H) {
+        return key
+      }
+    }
+
+    // Y cursor triangles (right edge, left-pointing)
+    for (const [key, y] of [['y1', y1], ['y2', y2]] as const) {
+      if (mx >= rect.width - TRI_H && mx <= rect.width && my >= y - TRI_W / 2 && my <= y + TRI_W / 2) {
+        return key
+      }
+    }
+
+    return null
+  }, [cursors])
 
   const findTarget = useCallback((x: number, y: number): DragTarget => {
+    // Check triangles first (easier to grab)
+    const triTarget = hitTestTriangle(x, y)
+    if (triTarget) return triTarget
+
     const { x1, x2, y1, y2 } = cursors
     if (Math.abs(x - x1) < GRAB_THRESHOLD) return 'x1'
     if (Math.abs(x - x2) < GRAB_THRESHOLD) return 'x2'
@@ -115,7 +173,15 @@ export function CursorOverlay(): React.ReactElement {
     if (x >= minX && x <= maxX && y >= minY && y <= maxY) return 'all'
 
     return null
-  }, [cursors])
+  }, [cursors, hitTestTriangle])
+
+  const getCursor = useCallback((target: DragTarget): string => {
+    if (dragging) return 'grabbing'
+    if (target === 'x1' || target === 'x2') return 'col-resize'
+    if (target === 'y1' || target === 'y2') return 'row-resize'
+    if (target === 'all') return 'grab'
+    return 'crosshair'
+  }, [dragging])
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (!cursors.enabled) return
@@ -137,10 +203,17 @@ export function CursorOverlay(): React.ReactElement {
   }, [cursors.enabled, findTarget, setCursorX, setCursorY])
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!dragging) return
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
+
+    if (!dragging) {
+      // Update hover state
+      const target = findTarget(x, y)
+      setHoverTarget(target)
+      return
+    }
+
     const dx = x - dragStart.x
     const dy = y - dragStart.y
 
@@ -155,10 +228,15 @@ export function CursorOverlay(): React.ReactElement {
         setDragStart({ x, y })
         break
     }
-  }, [dragging, dragStart, cursors, setCursorX, setCursorY])
+  }, [dragging, dragStart, cursors, setCursorX, setCursorY, findTarget])
 
   const handleMouseUp = useCallback(() => {
     setDragging(null)
+  }, [])
+
+  const handleMouseLeave = useCallback(() => {
+    setDragging(null)
+    setHoverTarget(null)
   }, [])
 
   if (!cursors.enabled) return <></>
@@ -172,13 +250,13 @@ export function CursorOverlay(): React.ReactElement {
         left: 0,
         width: '100%',
         height: '100%',
-        cursor: dragging ? 'grabbing' : 'crosshair',
+        cursor: getCursor(dragging || hoverTarget),
         zIndex: 10
       }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
+      onMouseLeave={handleMouseLeave}
     >
       <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
     </div>

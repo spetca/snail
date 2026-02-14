@@ -9,6 +9,9 @@ export function FrequencyAxis(): React.ReactElement {
   const containerRef = useRef<HTMLDivElement>(null)
 
   const sampleRate = useStore((s) => s.sampleRate)
+  const fftSize = useStore((s) => s.fftSize)
+  const yZoomLevel = useStore((s) => s.yZoomLevel)
+  const yScrollOffset = useStore((s) => s.yScrollOffset)
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -30,6 +33,17 @@ export function FrequencyAxis(): React.ReactElement {
 
     const numTicks = 8
     const halfRate = sampleRate / 2
+    const totalBins = fftSize / 2
+
+    // Visible frequency range accounting for Y zoom/scroll
+    // yScrollOffset is in bins, normalized: yOffset = yScrollOffset / totalBins
+    const yOffset = yScrollOffset / totalBins
+    const visibleFraction = 1 / yZoomLevel
+
+    // Screen top (0) maps to freq at yOffset, screen bottom (1) maps to yOffset + visibleFraction
+    // In the original: screen pos 0 = +halfRate, pos 1 = -halfRate
+    // With zoom: screen pos t maps to normalized freq = yOffset + t * visibleFraction
+    // Then freq = halfRate - normalizedFreq * sampleRate
 
     ctx.strokeStyle = '#2a3140'
     ctx.fillStyle = '#8890a0'
@@ -38,8 +52,8 @@ export function FrequencyAxis(): React.ReactElement {
 
     for (let i = 0; i <= numTicks; i++) {
       const y = (i / numTicks) * rect.height
-      // Frequency: top = +sampleRate/2, bottom = -sampleRate/2
-      const freq = halfRate - (i / numTicks) * sampleRate
+      const normalizedPos = yOffset + (i / numTicks) * visibleFraction
+      const freq = halfRate - normalizedPos * sampleRate
 
       ctx.beginPath()
       ctx.moveTo(0, y)
@@ -48,7 +62,7 @@ export function FrequencyAxis(): React.ReactElement {
 
       ctx.fillText(formatFrequency(freq), 10, y + 4)
     }
-  }, [sampleRate])
+  }, [sampleRate, fftSize, yZoomLevel, yScrollOffset])
 
   return (
     <div

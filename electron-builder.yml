@@ -14,6 +14,7 @@ extraResources:
     filter:
       - '**/*'
 mac:
+  icon: build/icons/mac/icon.icns
   target:
     - target: dmg
       arch:
@@ -21,10 +22,12 @@ mac:
         - x64
   entitlementsInherit: build/entitlements.mac.plist
 linux:
+  icon: build/icons/png/1024x1024.png
   target:
     - AppImage
     - deb
   category: Utility
 win:
+  icon: build/icons/win/icon.ico
   target:
     - nsis

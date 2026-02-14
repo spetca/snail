@@ -1,3 +1,5 @@
+<p align="center"><img src="snail.png" width="200"></p>
+
 # Snail
 
 A fast, cross-platform IQ file analyzer built for RF engineers and signal processing workflows. Handles multi-gigabyte recordings with instant load times via memory-mapped I/O and GPU-accelerated spectrogram rendering.

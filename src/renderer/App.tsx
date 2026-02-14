@@ -5,9 +5,11 @@ import { ControlsPanel } from './components/ControlsPanel'
 import { SpectrogramView } from './components/SpectrogramView'
 import { TracePlot } from './components/TracePlot'
 import { CorrelationPlot } from './components/CorrelationPlot'
+import { CorrelationPane } from './components/CorrelationPane'
 import { TimeAxis } from './components/TimeAxis'
 import { FrequencyAxis } from './components/FrequencyAxis'
 import { CursorOverlay } from './components/CursorOverlay'
+import { ScrollBar } from './components/ScrollBar'
 import { StatusBar } from './components/StatusBar'
 import { ExportDialog } from './components/ExportDialog'
 import { CorrelationDialog } from './components/CorrelationDialog'
@@ -18,6 +20,14 @@ export default function App(): React.ReactElement {
   const setLoading = useStore((s) => s.setLoading)
   const setError = useStore((s) => s.setError)
   const correlationData = useStore((s) => s.correlationData)
+  const correlationPaneVisible = useStore((s) => s.correlationPaneVisible)
+  const scrollOffset = useStore((s) => s.scrollOffset)
+  const setScrollOffset = useStore((s) => s.setScrollOffset)
+  const fftSize = useStore((s) => s.fftSize)
+  const zoomLevel = useStore((s) => s.zoomLevel)
+  const yZoomLevel = useStore((s) => s.yZoomLevel)
+  const yScrollOffset = useStore((s) => s.yScrollOffset)
+  const setYScrollOffset = useStore((s) => s.setYScrollOffset)
   const [showExport, setShowExport] = React.useState(false)
   const [showCorrelation, setShowCorrelation] = React.useState(false)
 
@@ -40,6 +50,16 @@ export default function App(): React.ReactElement {
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
   }, [])
+
+  // Compute scrollbar parameters
+  const totalSamples = fileInfo?.totalSamples ?? 0
+  const stride = fftSize / zoomLevel
+  // viewportSize in samples — approximate, actual depends on spectrogram pixel width
+  // We use a rough estimate; the scrollbar handles proportionality fine
+  const xViewportSamples = 800 * stride // will be refined by actual width
+  const totalFreqBins = fftSize / 2
+  const visibleFreqBins = totalFreqBins / yZoomLevel
+  const maxYScroll = totalFreqBins - visibleFreqBins
 
   return (
     <div
@@ -65,15 +85,36 @@ export default function App(): React.ReactElement {
           {fileInfo ? (
             <>
               <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-                <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-                  <SpectrogramView />
-                  <CursorOverlay />
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                  <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+                    <SpectrogramView />
+                    <CursorOverlay />
+                  </div>
+                  {/* Horizontal scrollbar below spectrogram */}
+                  <ScrollBar
+                    orientation="horizontal"
+                    totalRange={totalSamples}
+                    viewportSize={xViewportSamples}
+                    value={scrollOffset}
+                    onChange={setScrollOffset}
+                  />
                 </div>
+                {/* Vertical scrollbar between spectrogram and frequency axis */}
+                {yZoomLevel > 1 && (
+                  <ScrollBar
+                    orientation="vertical"
+                    totalRange={totalFreqBins}
+                    viewportSize={visibleFreqBins}
+                    value={yScrollOffset}
+                    onChange={setYScrollOffset}
+                  />
+                )}
                 <FrequencyAxis />
               </div>
               <TimeAxis />
               <TracePlot />
-              {correlationData && <CorrelationPlot />}
+              {correlationData && !correlationPaneVisible && <CorrelationPlot />}
+              {correlationPaneVisible && <CorrelationPane />}
             </>
           ) : (
             <div

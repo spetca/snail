@@ -58,11 +58,14 @@ export function ControlsPanel(): React.ReactElement {
       <Section title="Zoom">
         <input
           type="range"
-          min={1}
-          max={16}
-          step={1}
-          value={zoomLevel}
-          onChange={(e) => setZoomLevel(Number(e.target.value))}
+          min={0}
+          max={Math.log2(fftSize)}
+          step={0.25}
+          value={Math.log2(zoomLevel)}
+          onChange={(e) => {
+            const z = Math.round(Math.pow(2, Number(e.target.value)))
+            setZoomLevel(Math.max(1, Math.min(fftSize, z)))
+          }}
         />
         <span style={valStyle}>{zoomLevel}x</span>
       </Section>
