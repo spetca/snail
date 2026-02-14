@@ -1,0 +1,30 @@
+appId: com.snail.app
+productName: Snail
+directories:
+  buildResources: build
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+extraResources:
+  - from: src/native/build/Release/*.node
+    to: native/
+    filter:
+      - '**/*'
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  entitlementsInherit: build/entitlements.mac.plist
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Utility
+win:
+  target:
+    - nsis

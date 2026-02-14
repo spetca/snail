@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+out/
+dist/
+
+# Native addon build artifacts
+src/native/build/
+*.node
+
+# Test fixtures (generated binary IQ/SigMF files)
+test/fixtures/*.cf32
+test/fixtures/*.sigmf-data
+test/fixtures/*.sigmf-meta
+test/fixtures/*.iq
+
+# Notes (internal dev docs, not shipped)
+notes/
+
+# Reference source (not part of project)
+inspectrum/
+
+# Python virtual environment
+venv/
+__pycache__/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Env files
+.env
+.env.*
+
+# Electron builder cache
+*.blockmap
+*.snap
