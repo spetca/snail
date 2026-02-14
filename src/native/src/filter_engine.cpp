@@ -1,6 +1,7 @@
 #include "filter_engine.h"
 #include <cmath>
 #include <liquid/liquid.h>
+#include <memory>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846

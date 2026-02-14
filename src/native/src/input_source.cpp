@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <memory>
 
 #include <nlohmann/json.hpp>
 
