@@ -1,4 +1,4 @@
-import { ipcMain, dialog } from 'electron'
+import { ipcMain, dialog, app } from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
 import { IPC } from '../shared/ipc-channels'
@@ -9,11 +9,33 @@ let native: any = null
 
 function loadNative(): any {
   if (native) return native
+
+  const isPackaged = app.isPackaged
+  const prodPath = path.join(process.resourcesPath, 'native', 'snail_native.node')
+  // In development, the path depends on where the main process is running from
+  const devPath = path.resolve(__dirname, '../../src/native/build/Release/snail_native.node')
+
+  const searchPaths = isPackaged
+    ? [prodPath]
+    : [devPath, path.join(__dirname, '../native/snail_native.node')]
+
+  for (const p of searchPaths) {
+    try {
+      if (fs.existsSync(p)) {
+        native = require(p)
+        return native
+      }
+    } catch (e) {
+      console.error(`Failed to load native addon from ${p}:`, e)
+    }
+  }
+
+  // Fallback for dev environment structures
   try {
     native = require('../../src/native/build/Release/snail_native.node')
     return native
   } catch {
-    console.warn('Native addon not available - using stub')
+    console.warn('Native addon not available at searched paths')
     return null
   }
 }
