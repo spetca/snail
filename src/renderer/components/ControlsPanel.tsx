@@ -1,6 +1,7 @@
 import React from 'react'
-import { useStore, type XAxisMode } from '../state/store'
+import { useStore, type XAxisMode, type CursorState } from '../state/store'
 import type { SigMFAnnotation } from '../../shared/sample-formats'
+import { formatTimeValue, formatFrequency } from '../../shared/units'
 
 const ANNOTATION_COLORS = ['#FF6B6B', '#4DABF7', '#51CF66', '#FFD43B', '#CC5DE8', '#FF922B']
 
@@ -14,8 +15,12 @@ export function ControlsPanel(): React.ReactElement {
   const powerMax = useStore((s) => s.powerMax)
   const sampleRate = useStore((s) => s.sampleRate)
   const xAxisMode = useStore((s) => s.xAxisMode)
-  const cursorsEnabled = useStore((s) => s.cursors.enabled)
+  const cursors = useStore((s) => s.cursors)
+  const cursorsEnabled = cursors.enabled
+  const scrollOffset = useStore((s) => s.scrollOffset)
+  const viewHeight = useStore((s) => s.viewHeight)
   const annotations = useStore((s) => s.annotations)
+  const annotationsVisible = useStore((s) => s.annotationsVisible)
   const viewWidth = useStore((s) => s.viewWidth)
   const selectedAnnotationIndex = useStore((s) => s.selectedAnnotationIndex)
   const setSelectedAnnotationIndex = useStore((s) => s.setSelectedAnnotationIndex)
@@ -27,6 +32,7 @@ export function ControlsPanel(): React.ReactElement {
   const setSampleRate = useStore((s) => s.setSampleRate)
   const setXAxisMode = useStore((s) => s.setXAxisMode)
   const setCursorsEnabled = useStore((s) => s.setCursorsEnabled)
+  const setAnnotationsVisible = useStore((s) => s.setAnnotationsVisible)
   const setScrollOffset = useStore((s) => s.setScrollOffset)
   const snapToView = useStore((s) => s.snapToView)
 
@@ -166,6 +172,17 @@ export function ControlsPanel(): React.ReactElement {
         </label>
       </Section>
 
+      {cursorsEnabled && cursors.x1 !== cursors.x2 && (
+        <CursorInfoSection
+          cursors={cursors}
+          fftSize={fftSize}
+          zoomLevel={zoomLevel}
+          scrollOffset={scrollOffset}
+          sampleRate={sampleRate}
+          viewHeight={viewHeight}
+        />
+      )}
+
       {fileInfo && (
         <Section title="File Info">
           <InfoRow label="Format" value={fileInfo.format} />
@@ -179,6 +196,17 @@ export function ControlsPanel(): React.ReactElement {
 
       {annotations.length > 0 && (
         <Section title="Annotations">
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 6 }}>
+            <input
+              type="checkbox"
+              checked={annotationsVisible}
+              onChange={(e) => {
+                setAnnotationsVisible(e.target.checked)
+                if (!e.target.checked) setSelectedAnnotationIndex(null)
+              }}
+            />
+            <span style={{ fontSize: 12 }}>Show on spectrogram</span>
+          </label>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {annotations.map((ann, i) => {
               const color = ANNOTATION_COLORS[i % ANNOTATION_COLORS.length]
@@ -222,6 +250,39 @@ export function ControlsPanel(): React.ReactElement {
         </Section>
       )}
     </div>
+  )
+}
+
+function CursorInfoSection({ cursors, fftSize, zoomLevel, scrollOffset, sampleRate, viewHeight }: {
+  cursors: CursorState
+  fftSize: number
+  zoomLevel: number
+  scrollOffset: number
+  sampleRate: number
+  viewHeight: number
+}) {
+  const samplesPerPx = fftSize / zoomLevel
+  const s1 = Math.round(cursors.x1 * samplesPerPx + scrollOffset)
+  const s2 = Math.round(cursors.x2 * samplesPerPx + scrollOffset)
+  const sampleDelta = Math.abs(s2 - s1)
+  const timeDelta = sampleDelta / sampleRate
+
+  const freqFromY = (yPx: number) => viewHeight > 0
+    ? (0.5 - yPx / viewHeight) * sampleRate
+    : 0
+  const f1 = freqFromY(cursors.y1)
+  const f2 = freqFromY(cursors.y2)
+  const bandwidth = Math.abs(f1 - f2)
+
+  return (
+    <Section title="Cursor Info">
+      <InfoRow label="Samples" value={`${Math.min(s1, s2).toLocaleString()} - ${Math.max(s1, s2).toLocaleString()}`} />
+      <InfoRow label={'\u0394 Samples'} value={sampleDelta.toLocaleString()} />
+      <InfoRow label={'\u0394 Time'} value={formatTimeValue(timeDelta)} />
+      {cursors.y1 !== cursors.y2 && (
+        <InfoRow label="BW" value={formatFrequency(bandwidth)} />
+      )}
+    </Section>
   )
 }
 

@@ -11,6 +11,7 @@ export function TracePlot(): React.ReactElement {
   const scrollOffset = useStore((s) => s.scrollOffset)
   const fftSize = useStore((s) => s.fftSize)
   const zoomLevel = useStore((s) => s.zoomLevel)
+  const cursors = useStore((s) => s.cursors)
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -71,6 +72,20 @@ export function TracePlot(): React.ReactElement {
         }
         ctx.stroke()
 
+        // Cursor selection highlight
+        if (cursors.enabled && cursors.x1 !== cursors.x2) {
+          const left = Math.min(cursors.x1, cursors.x2)
+          const right = Math.max(cursors.x1, cursors.x2)
+          ctx.fillStyle = 'rgba(0, 212, 170, 0.15)'
+          ctx.fillRect(left, 0, right - left, TRACE_HEIGHT)
+          ctx.strokeStyle = 'rgba(0, 212, 170, 0.4)'
+          ctx.lineWidth = 1
+          ctx.beginPath()
+          ctx.moveTo(left, 0); ctx.lineTo(left, TRACE_HEIGHT)
+          ctx.moveTo(right, 0); ctx.lineTo(right, TRACE_HEIGHT)
+          ctx.stroke()
+        }
+
         // Labels
         ctx.font = '10px "JetBrains Mono", monospace'
         ctx.fillStyle = '#ff6b6b'
@@ -81,7 +96,7 @@ export function TracePlot(): React.ReactElement {
       .catch(() => {
         // Silently fail if native addon not ready
       })
-  }, [fileInfo, scrollOffset, fftSize, zoomLevel])
+  }, [fileInfo, scrollOffset, fftSize, zoomLevel, cursors])
 
   return (
     <div

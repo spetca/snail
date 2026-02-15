@@ -24,12 +24,12 @@ void SpectrogramWorker::Execute() {
     int stride = stride_;
     int numLines = TILE_LINES;
 
-    // Only compute lines where the full FFT window fits in the file
-    // This avoids zero-padded windows that create spectral artifacts at the boundary
+    // Compute lines for all samples, including partial windows at the end
+    // (getSamples zero-pads beyond the file boundary)
     size_t maxLines = 0;
     size_t total = source_.totalSamples();
-    if (startSample_ + fftSize_ <= total) {
-        maxLines = (total - startSample_ - fftSize_) / stride + 1;
+    if (startSample_ < total) {
+        maxLines = (total - startSample_ - 1) / stride + 1;
     }
     numLines = std::min(numLines, static_cast<int>(maxLines));
     if (numLines <= 0) {

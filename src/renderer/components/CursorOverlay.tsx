@@ -21,6 +21,7 @@ export function CursorOverlay(): React.ReactElement {
 
   const cursors = useStore((s) => s.cursors)
   const annotations = useStore((s) => s.annotations)
+  const annotationsVisible = useStore((s) => s.annotationsVisible)
   const sampleRate = useStore((s) => s.sampleRate)
   const fftSize = useStore((s) => s.fftSize)
   const zoomLevel = useStore((s) => s.zoomLevel)
@@ -43,8 +44,7 @@ export function CursorOverlay(): React.ReactElement {
   useEffect(() => {
     const canvas = canvasRef.current
     const container = containerRef.current
-    const hasContent = cursors.enabled || annotations.length > 0
-    if (!canvas || !container || !hasContent) return
+    if (!canvas || !container) return
 
     const rect = container.getBoundingClientRect()
     const dpr = window.devicePixelRatio || 1
@@ -65,7 +65,7 @@ export function CursorOverlay(): React.ReactElement {
     const visibleBins = totalBins / yZoomLevel
     const yScrollBins = yScrollOffset / totalBins // normalized
 
-    for (let i = 0; i < annotations.length; i++) {
+    for (let i = 0; annotationsVisible && i < annotations.length; i++) {
       const ann = annotations[i]
       const color = ANNOTATION_COLORS[i % ANNOTATION_COLORS.length]
 
@@ -156,34 +156,7 @@ export function CursorOverlay(): React.ReactElement {
       }
       ctx.setLineDash([])
 
-      // Measurements label
       const samplesPerPixel = fftSize / zoomLevel
-      const sampleDelta = Math.abs(x2 - x1) * samplesPerPixel
-      const timeDelta = sampleDelta / sampleRate
-
-      const freqTop = (0.5 - Math.min(y1, y2) / rect.height) * sampleRate
-      const freqBot = (0.5 - Math.max(y1, y2) / rect.height) * sampleRate
-      const bandwidth = Math.abs(freqTop - freqBot)
-
-      ctx.font = '11px "JetBrains Mono", monospace'
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'
-      const labelX = Math.max(x1, x2) + 8
-      const labelY = Math.min(y1, y2) - 8
-
-      const labels = [
-        xAxisMode === 'time'
-          ? `\u0394t: ${formatTimeValue(timeDelta)}`
-          : `\u0394n: ${Math.round(sampleDelta)}`,
-        `BW: ${formatFrequency(bandwidth)}`
-      ]
-
-      labels.forEach((label, i) => {
-        const textWidth = ctx.measureText(label).width
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'
-        ctx.fillRect(labelX - 2, labelY + i * 16 - 11, textWidth + 4, 14)
-        ctx.fillStyle = '#00d4aa'
-        ctx.fillText(label, labelX, labelY + i * 16)
-      })
 
       // Draw yellow triangle grabbers on top
 
@@ -233,7 +206,7 @@ export function CursorOverlay(): React.ReactElement {
         ctx.fillText(label, rect.width - TRI_H - tw - 9, y + 4)
       }
     } // end if (cursors.enabled)
-  }, [cursors, annotations, fftSize, zoomLevel, sampleRate, scrollOffset, xAxisMode, yZoomLevel, yScrollOffset, hoverTarget, selectedAnnotationIndex])
+  }, [cursors, annotations, annotationsVisible, fftSize, zoomLevel, sampleRate, scrollOffset, xAxisMode, yZoomLevel, yScrollOffset, hoverTarget, selectedAnnotationIndex])
 
   const hitTestTriangle = useCallback((mx: number, my: number): DragTarget => {
     const container = containerRef.current
@@ -352,28 +325,39 @@ export function CursorOverlay(): React.ReactElement {
           setScrollOffset(Math.max(0, Math.min(maxOffset, Math.round(newOffset))))
         }
       } else {
-        // Start new selection
-        setCursorX(x, x)
-        setCursorY(y, y)
+        // Start new selection (clamped to valid range)
+        const cx = clampX(x, rect.width)
+        const cy = Math.max(0, Math.min(rect.height, y))
+        setCursorX(cx, cx)
+        setCursorY(cy, cy)
         setDragging('x2')
-        setDragStart({ x, y })
+        setDragStart({ x: cx, y: cy })
         setSelectedAnnotationIndex(null)
       }
     }
   }, [cursors.enabled, findTarget, hitTestAnnotation, annotations, fileInfo, fftSize, viewWidth, setCursorX, setCursorY, setZoomLevel, setScrollOffset, setSelectedAnnotationIndex])
 
+  // Clamp X pixel position so cursor can't exceed the file's sample range
+  const clampX = useCallback((px: number, containerWidth: number): number => {
+    if (!fileInfo) return Math.max(0, Math.min(containerWidth, px))
+    const stride = fftSize / zoomLevel
+    const maxPx = (fileInfo.totalSamples - scrollOffset) / stride
+    return Math.max(0, Math.min(Math.min(containerWidth, maxPx), px))
+  }, [fileInfo, fftSize, zoomLevel, scrollOffset])
+
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
+    const rawX = e.clientX - rect.left
+    const rawY = e.clientY - rect.top
 
     if (!dragging) {
-      // Update hover state
-      const target = findTarget(x, y)
+      const target = findTarget(rawX, rawY)
       setHoverTarget(target)
       return
     }
 
+    const x = clampX(rawX, rect.width)
+    const y = Math.max(0, Math.min(rect.height, rawY))
     const dx = x - dragStart.x
     const dy = y - dragStart.y
 
@@ -382,13 +366,18 @@ export function CursorOverlay(): React.ReactElement {
       case 'x2': setCursorX(cursors.x1, x); break
       case 'y1': setCursorY(y, cursors.y2); break
       case 'y2': setCursorY(cursors.y1, y); break
-      case 'all':
-        setCursorX(cursors.x1 + dx, cursors.x2 + dx)
-        setCursorY(cursors.y1 + dy, cursors.y2 + dy)
+      case 'all': {
+        const nx1 = clampX(cursors.x1 + dx, rect.width)
+        const nx2 = clampX(cursors.x2 + dx, rect.width)
+        const ny1 = Math.max(0, Math.min(rect.height, cursors.y1 + dy))
+        const ny2 = Math.max(0, Math.min(rect.height, cursors.y2 + dy))
+        setCursorX(nx1, nx2)
+        setCursorY(ny1, ny2)
         setDragStart({ x, y })
         break
+      }
     }
-  }, [dragging, dragStart, cursors, setCursorX, setCursorY, findTarget])
+  }, [dragging, dragStart, cursors, setCursorX, setCursorY, findTarget, clampX])
 
   const handleMouseUp = useCallback(() => {
     setDragging(null)

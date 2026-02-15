@@ -1,6 +1,7 @@
 import React from 'react'
 import { useStore } from '../state/store'
 import { formatTimeValue, formatFrequency, formatSampleRate } from '../../shared/units'
+import { version } from '../../../package.json'
 
 export function StatusBar(): React.ReactElement {
   const fileInfo = useStore((s) => s.fileInfo)
@@ -61,7 +62,7 @@ export function StatusBar(): React.ReactElement {
       )}
 
       <div style={{ flex: 1 }} />
-      <span style={{ color: 'var(--text-dim)' }}>Snail v0.1.0</span>
+      <span style={{ color: 'var(--text-dim)' }}>Snail v{version}</span>
     </div>
   )
 }

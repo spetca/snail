@@ -37,6 +37,7 @@ export interface AppState {
 
   // Annotations
   annotations: SigMFAnnotation[]
+  annotationsVisible: boolean
   selectedAnnotationIndex: number | null
 
   // Dialogs
@@ -73,6 +74,7 @@ export interface AppState {
   setCursorX: (x1: number, x2: number) => void
   setCursorY: (y1: number, y2: number) => void
   setAnnotations: (annotations: SigMFAnnotation[]) => void
+  setAnnotationsVisible: (visible: boolean) => void
   setSelectedAnnotationIndex: (index: number | null) => void
   addAnnotation: (annotation: SigMFAnnotation) => void
   setShowExportDialog: (show: boolean) => void
@@ -94,7 +96,7 @@ const initialState = {
   fileInfo: null,
   loading: false,
   error: null,
-  fftSize: 2048,
+  fftSize: 512,
   zoomLevel: 1,
   powerMin: -100,
   powerMax: 0,
@@ -107,6 +109,7 @@ const initialState = {
   yScrollOffset: 0,
   cursors: { enabled: false, x1: 0, x2: 0, y1: 0, y2: 0 },
   annotations: [] as SigMFAnnotation[],
+  annotationsVisible: true,
   selectedAnnotationIndex: null as number | null,
   showExportDialog: false,
   showAnnotationDialog: false,
@@ -190,6 +193,7 @@ export const useStore = create<AppState>((set, get) => ({
     cursors: { ...s.cursors, y1, y2 }
   })),
   setAnnotations: (annotations) => set({ annotations }),
+  setAnnotationsVisible: (visible) => set({ annotationsVisible: visible }),
   setSelectedAnnotationIndex: (index) => set({ selectedAnnotationIndex: index }),
   addAnnotation: (annotation) => set((s) => ({
     annotations: [...s.annotations, annotation]
@@ -218,9 +222,8 @@ export const useStore = create<AppState>((set, get) => ({
   snapToView: () => {
     const s = get()
     if (!s.fileInfo) return
-    // Stride required to fit all samples: s.fileInfo.totalSamples / s.viewWidth
-    // Zoom = fftSize / stride
-    const fillZoom = (s.fftSize * s.viewWidth) / s.fileInfo.totalSamples
+    const vw = s.viewWidth > 0 ? s.viewWidth : 1000
+    const fillZoom = (s.fftSize * vw) / s.fileInfo.totalSamples
     set({
       zoomLevel: Math.min(s.fftSize, fillZoom),
       scrollOffset: 0,

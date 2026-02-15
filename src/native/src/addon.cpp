@@ -194,20 +194,30 @@ public:
         g_source.getSamples(windowStart_, windowLen_, signal.data());
 
         if (mode_ == "file") {
-            // Open second file (the pattern to find)
+            // Open second file as the pattern/template to search for
             InputSource secondSource;
             secondSource.open(secondPath_, secondFormat_);
 
-            // Read entire second file as the pattern/template
             size_t patternLen = secondSource.totalSamples();
             std::vector<std::complex<float>> pattern(patternLen);
             secondSource.getSamples(0, patternLen, pattern.data());
 
-            // Cross-correlate: slide pattern through window
-            result_ = CorrelationEngine::crossCorrelate(
-                signal.data(), windowLen_,
-                pattern.data(), patternLen
-            );
+            // Cross-correlate: the shorter sequence slides through the longer one
+            // signal = cursor window from main file, pattern = entire second file
+            if (patternLen <= windowLen_) {
+                // Normal case: small pattern slides through large window
+                result_ = CorrelationEngine::crossCorrelate(
+                    signal.data(), windowLen_,
+                    pattern.data(), patternLen
+                );
+            } else {
+                // Pattern is larger (e.g. correlating file with itself):
+                // slide the window through the pattern
+                result_ = CorrelationEngine::crossCorrelate(
+                    pattern.data(), patternLen,
+                    signal.data(), windowLen_
+                );
+            }
         } else if (mode_ == "self") {
             // Self-correlation (Schmidl & Cox)
             result_ = CorrelationEngine::selfCorrelate(

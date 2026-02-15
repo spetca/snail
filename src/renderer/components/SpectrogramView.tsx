@@ -24,6 +24,7 @@ export function SpectrogramView(): React.ReactElement {
   const yScrollOffset = useStore((s) => s.yScrollOffset)
   const setYZoomLevel = useStore((s) => s.setYZoomLevel)
   const setYScrollOffset = useStore((s) => s.setYScrollOffset)
+  const setLoading = useStore((s) => s.setLoading)
 
   // Stride: how many samples between FFT columns. Integer >= 1.
   // zoomLevel > 1 means overlap (stride < fftSize), < 1 means gaps (stride > fftSize)
@@ -72,16 +73,20 @@ export function SpectrogramView(): React.ReactElement {
   }, [])
 
   // Reset on new file: clear old tiles and fit to viewport
+  const fittedFileRef = useRef<string | null>(null)
+  const initialLoadRef = useRef(false)
   useEffect(() => {
     if (!fileInfo || viewSize.width === 0) return
+    const fileKey = `${fileInfo.path}_${fileInfo.totalSamples}`
+    if (fittedFileRef.current === fileKey) return
+    fittedFileRef.current = fileKey
+    initialLoadRef.current = true
     rendererRef.current?.clearTiles()
     generationRef.current++
-    // Compute zoom so all samples fit: viewWidth * stride <= totalSamples
-    // stride = fftSize / zoom => zoom = fftSize * viewWidth / totalSamples
     const fillZoom = fftSize * viewSize.width / fileInfo.totalSamples
     setZoomLevel(Math.min(fftSize, fillZoom))
     setScrollOffset(0)
-  }, [fileInfo]) // only on new file, not on every resize/fftSize change
+  }, [fileInfo, viewSize.width])
 
   // Render spectrogram
   useEffect(() => {
@@ -119,16 +124,21 @@ export function SpectrogramView(): React.ReactElement {
 
       for (let tIdx = firstTileIdx; tIdx <= lastTileIdx; tIdx++) {
         const tileSampleStart = tIdx * tileSampleCoverage
-        if (tileSampleStart >= fileInfo.totalSamples) break
         if (tileSampleStart < 0) continue
+        // Skip tiles that start beyond the file
+        if (tileSampleStart >= fileInfo.totalSamples) break
 
         const tileKey = `${tileSampleStart}_${fftSize}_${stride}`
         if (renderer.hasTile(tileKey)) continue
         needed.push({ tileKey, tileSampleStart })
       }
 
-      if (needed.length === 0) return
+      if (needed.length === 0) {
+        if (initialLoadRef.current) { initialLoadRef.current = false; setLoading(false) }
+        return
+      }
 
+      if (initialLoadRef.current) setLoading(true)
       for (let i = 0; i < needed.length; i += MAX_CONCURRENT_TILES) {
         if (generationRef.current !== generation) return
 
@@ -163,6 +173,7 @@ export function SpectrogramView(): React.ReactElement {
           renderer.render(renderParams)
         }
       }
+      if (initialLoadRef.current) { initialLoadRef.current = false; setLoading(false) }
     }
 
     loadTiles()
@@ -202,7 +213,7 @@ export function SpectrogramView(): React.ReactElement {
     } else {
       const sampleAtCursor = scrollOffset + mouseX * oldStride
       const newOffset = sampleAtCursor - mouseX * newStride
-      const maxOffset = Math.max(0, fileInfo.totalSamples - viewSize.width * newStride)
+      const maxOffset = Math.max(0, fileInfo.totalSamples - fftSize - viewSize.width * newStride)
       setScrollOffset(Math.max(0, Math.min(maxOffset, Math.round(newOffset))))
     }
   }, [fileInfo, fftSize, zoomLevel, stride, scrollOffset, setScrollOffset, setZoomLevel, minZoom, viewSize.width])

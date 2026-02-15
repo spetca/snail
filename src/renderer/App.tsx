@@ -18,6 +18,7 @@ export default function App(): React.ReactElement {
   const setFileInfo = useStore((s) => s.setFileInfo)
   const setLoading = useStore((s) => s.setLoading)
   const setError = useStore((s) => s.setError)
+  const loading = useStore((s) => s.loading)
   const correlationEnabled = useStore((s) => s.correlationEnabled)
   const scrollOffset = useStore((s) => s.scrollOffset)
   const setScrollOffset = useStore((s) => s.setScrollOffset)
@@ -75,7 +76,27 @@ export default function App(): React.ReactElement {
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <ControlsPanel />
 
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
+          {loading && (
+            <div style={{
+              position: 'absolute',
+              inset: 0,
+              zIndex: 50,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'rgba(15, 17, 21, 0.85)',
+              backdropFilter: 'blur(4px)',
+            }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" style={{ animation: 'spin 1s linear infinite' }}>
+                  <path d="M12 2a10 10 0 0 1 10 10" strokeLinecap="round" />
+                </svg>
+                <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>Loading file...</span>
+              </div>
+              <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+            </div>
+          )}
           {fileInfo ? (
             <>
               <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>

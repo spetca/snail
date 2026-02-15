@@ -78,20 +78,33 @@ std::vector<float> CorrelationEngine::crossCorrelate(
     std::vector<float> output(outLen);
     float invN = 1.0f / fftLen;
 
+    // Minimum overlap: at least 50% of the shorter sequence must overlap
+    // to avoid NCC edge artifacts where tiny overlap gets normalized to 1.0
+    int minOverlap = static_cast<int>(std::min(signalLen, tmplLen)) / 2;
+    if (minOverlap < 1) minOverlap = 1;
+
     for (size_t i = 0; i < outLen; i++) {
         // Lag k: - (tmplLen - 1) up to (signalLen - 1)
         int k = static_cast<int>(i) - (static_cast<int>(tmplLen) - 1);
-        
+
+        // Compute overlap length for this lag
+        int overlapStartSig = std::max(0, k);
+        int overlapEndSig = std::min(static_cast<int>(signalLen), k + static_cast<int>(tmplLen));
+        int overlapLen = overlapEndSig - overlapStartSig;
+
+        // Skip lags with insufficient overlap
+        if (overlapLen < minOverlap) {
+            output[i] = 0.0f;
+            continue;
+        }
+
         // FFT index for lag k
         size_t fftIdx = (k >= 0) ? static_cast<size_t>(k) : (fftLen + k);
-        
+
         float re = result[fftIdx][0] * invN;
         float im = result[fftIdx][1] * invN;
         float mag = std::sqrt(re * re + im * im);
 
-        // Define overlap region
-        int overlapStartSig = std::max(0, k);
-        int overlapEndSig = std::min(static_cast<int>(signalLen), k + static_cast<int>(tmplLen));
         float eSig = sigCumEnergy[overlapEndSig] - sigCumEnergy[overlapStartSig];
 
         int overlapStartTmpl = std::max(0, -k);

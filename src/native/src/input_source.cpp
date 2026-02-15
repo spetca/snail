@@ -215,10 +215,17 @@ void InputSource::getSamples(size_t start, size_t length, std::complex<float>* d
         throw std::runtime_error("No file open");
     }
     size_t end = start + length;
+    size_t actualLength = length;
     if (end > totalSamples_) {
-        length = totalSamples_ - start;
+        actualLength = (start < totalSamples_) ? totalSamples_ - start : 0;
     }
-    adapter_->copyRange(mmapData_, start, length, dest);
+    if (actualLength > 0) {
+        adapter_->copyRange(mmapData_, start, actualLength, dest);
+    }
+    // Zero-fill any remaining samples beyond the file
+    for (size_t i = actualLength; i < length; i++) {
+        dest[i] = std::complex<float>(0.0f, 0.0f);
+    }
 }
 
 void InputSource::detectFormat(const std::string& path, const std::string& overrideFormat) {

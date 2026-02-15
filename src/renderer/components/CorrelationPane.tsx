@@ -283,20 +283,24 @@ export function CorrelationPane(): React.ReactElement {
       }
     }
 
-    // In full linear mode, index 0 is lag -(patternLen - 1)
-    // patternLen = totalLags - windowLength + 1
-    const patternLen = totalLags - windowLength + 1
-    const lag = peakIdx - (patternLen - 1)
+    // Output length = signalLen + tmplLen - 1, where tmpl is the shorter sequence
+    // Index 0 = lag -(tmplLen - 1), so lag 0 is at index tmplLen - 1
+    // tmplLen = totalLags - max(signalLen, tmplLen) + 1... simpler: tmplLen = totalLags - longerLen + 1
+    // The center (lag 0 = perfect alignment) is where the peak should be for identical signals
+    const tmplLen = Math.min(totalLags, Math.floor((totalLags + 1) / 2))
+    const lag = peakIdx - (tmplLen - 1)
 
     const peakX = (peakIdx / totalLags) * width
+    const peakY = PLOT_HEIGHT - 4 - (peakVal / maxVal) * (PLOT_HEIGHT - 8)
+    const xSize = 5
     ctx.strokeStyle = '#FFD700'
-    ctx.lineWidth = 1.5
-    ctx.setLineDash([3, 3])
+    ctx.lineWidth = 2
     ctx.beginPath()
-    ctx.moveTo(peakX, 0)
-    ctx.lineTo(peakX, PLOT_HEIGHT)
+    ctx.moveTo(peakX - xSize, peakY - xSize)
+    ctx.lineTo(peakX + xSize, peakY + xSize)
+    ctx.moveTo(peakX + xSize, peakY - xSize)
+    ctx.lineTo(peakX - xSize, peakY + xSize)
     ctx.stroke()
-    ctx.setLineDash([])
 
     // Labels
     ctx.font = '10px "JetBrains Mono", monospace'
@@ -307,7 +311,7 @@ export function CorrelationPane(): React.ReactElement {
     ctx.fillStyle = 'rgba(255,255,255,0.4)'
     if (correlationMode === 'file') {
       ctx.fillText(
-        `Full linear slide: [-${patternLen - 1}, +${windowLength - 1}] relative to window ${windowStart}`,
+        `Full linear slide: [-${tmplLen - 1}, +${windowLength - 1}] relative to window ${windowStart}`,
         6, PLOT_HEIGHT - 6
       )
     } else {
@@ -316,7 +320,7 @@ export function CorrelationPane(): React.ReactElement {
         6, PLOT_HEIGHT - 6
       )
     }
-  }, [correlationData, correlationLoading, correlationFilePath, windowStart, windowLength])
+  }, [correlationData, correlationLoading, correlationFilePath, correlationMode, windowStart, windowLength, tu, cpLen])
 
   if (!correlationEnabled) return <></>
 
