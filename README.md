@@ -29,7 +29,7 @@ Snail handles multi-gigabyte recordings with instant load times via memory-mappe
 
 ### Docker with noVNC 
 
-Run Snail in a Docker container and access it from any browser — no native dependencies needed. Uses noVNC to stream the desktop UI over WebSockets.
+This is a pretty shit way to experience snail! But you can run Snail in a Docker container and access it from any browser — no native dependencies needed. Uses noVNC to stream the desktop UI over WebSockets. 
 
 <p align="center"><img src="pics/snail-docker.png" width="100%"></p>
 
