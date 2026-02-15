@@ -54,8 +54,10 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
-      - name: Build native addon
-        run: npm run build:native
+      - name: Build native addon (for Electron)
+        run: |
+          ELECTRON_VER=$(node -e "console.log(require('./node_modules/electron/package.json').version)")
+          npx cmake-js compile -d src/native --runtime electron --runtime-version $ELECTRON_VER
 
       - name: Build Electron app
         run: npm run build

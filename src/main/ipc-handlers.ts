@@ -22,8 +22,11 @@ function loadNative(): any {
   for (const p of searchPaths) {
     try {
       if (fs.existsSync(p)) {
+        console.log(`Loading native addon from: ${p}`)
         native = require(p)
         return native
+      } else {
+        console.warn(`Native addon not found at: ${p}`)
       }
     } catch (e) {
       console.error(`Failed to load native addon from ${p}:`, e)
