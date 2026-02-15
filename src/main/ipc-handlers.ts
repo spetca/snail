@@ -88,10 +88,10 @@ export function registerIpcHandlers(): void {
     return addon.openFile(String(filePath), String(format || ''))
   })
 
-  ipcMain.handle(IPC.GET_SAMPLES, async (_event, start: number, length: number) => {
+  ipcMain.handle(IPC.GET_SAMPLES, async (_event, start: number, length: number, stride: number = 1) => {
     const addon = loadNative()
     if (!addon) throw new Error('Native addon not loaded')
-    return addon.getSamples(start, length)
+    return addon.getSamples(start, length, stride || 1)
   })
 
   ipcMain.handle(IPC.COMPUTE_FFT_TILE, async (_event, req: FFTTileRequest) => {

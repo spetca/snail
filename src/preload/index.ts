@@ -4,7 +4,7 @@ import type { SampleFormat, SigMFAnnotation, FileInfo, FFTTileRequest, ExportCon
 
 export interface SnailAPI {
   openFile: (path: string, format?: SampleFormat) => Promise<FileInfo>
-  getSamples: (start: number, length: number) => Promise<Float32Array>
+  getSamples: (start: number, length: number, stride?: number) => Promise<Float32Array>
   computeFFTTile: (req: FFTTileRequest) => Promise<Float32Array>
   exportSigMF: (config: ExportConfig) => Promise<{ success: boolean; error?: string }>
   correlate: (req: CorrelateRequest) => Promise<Float32Array>
@@ -17,7 +17,7 @@ export interface SnailAPI {
 
 const api: SnailAPI = {
   openFile: (path, format) => ipcRenderer.invoke(IPC.OPEN_FILE, path, format),
-  getSamples: (start, length) => ipcRenderer.invoke(IPC.GET_SAMPLES, start, length),
+  getSamples: (start, length, stride) => ipcRenderer.invoke(IPC.GET_SAMPLES, start, length, stride),
   computeFFTTile: (req) => ipcRenderer.invoke(IPC.COMPUTE_FFT_TILE, req),
   exportSigMF: (config) => ipcRenderer.invoke(IPC.EXPORT_SIGMF, config),
   correlate: (req) => ipcRenderer.invoke(IPC.CORRELATE, req),

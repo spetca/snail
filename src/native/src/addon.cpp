@@ -52,19 +52,32 @@ Napi::Value GetSamples(const Napi::CallbackInfo& info) {
 
     size_t start = static_cast<size_t>(info[0].As<Napi::Number>().DoubleValue());
     size_t length = static_cast<size_t>(info[1].As<Napi::Number>().DoubleValue());
+    size_t stride = 1;
+    if (info.Length() > 2 && info[2].IsNumber()) {
+        stride = static_cast<size_t>(info[2].As<Napi::Number>().DoubleValue());
+    }
 
-    // Clamp to available
+    if (stride < 1) stride = 1;
+
+    // Check bounds
     if (start >= g_source.totalSamples()) {
         return Napi::Float32Array::New(env, 0);
     }
-    if (start + length > g_source.totalSamples()) {
-        length = g_source.totalSamples() - start;
+
+    // Calculate max possible samples we can read with this stride
+    // start + (count - 1) * stride < totalSamples
+    // (count - 1) * stride < totalSamples - start
+    // count - 1 < (totalSamples - start) / stride
+    // count < (totalSamples - start) / stride + 1
+    size_t maxLen = (g_source.totalSamples() - start + stride - 1) / stride;
+    if (length > maxLen) {
+        length = maxLen;
     }
 
     // Allocate complex samples then flatten to interleaved I/Q
     std::vector<std::complex<float>> samples(length);
     try {
-        g_source.getSamples(start, length, samples.data());
+        g_source.getSamplesStrided(start, length, stride, samples.data());
     } catch (const std::exception& e) {
         Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
         return env.Undefined();

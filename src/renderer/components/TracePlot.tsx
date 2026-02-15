@@ -36,11 +36,18 @@ export function TracePlot(): React.ReactElement {
     ctx.fillRect(0, 0, rect.width, TRACE_HEIGHT)
 
     const samplesPerPixel = fftSize / zoomLevel
-    const numSamples = Math.ceil(rect.width * samplesPerPixel)
+    const stride = Math.max(1, Math.floor(samplesPerPixel))
     const start = scrollOffset
 
+    // We request enough valid samples to fill the screen width
+    // If stride > 1, we get 1 sample per pixel (approx)
+    // If stride == 1, we get samplesPerPixel samples per pixel
+    const samplesToRequest = stride > 1
+      ? Math.ceil(rect.width) + 2
+      : Math.ceil(rect.width * samplesPerPixel)
+
     // Load samples and draw
-    window.snailAPI.getSamples(start, Math.min(numSamples, fileInfo.totalSamples - start))
+    window.snailAPI.getSamples(start, samplesToRequest, stride)
       .then((samples) => {
         if (!samples || samples.length === 0) return
 
@@ -52,9 +59,20 @@ export function TracePlot(): React.ReactElement {
         ctx.lineWidth = 1
         ctx.beginPath()
         for (let px = 0; px < rect.width; px++) {
-          const sampleIdx = Math.floor(px * samplesPerPixel) * 2 // complex: I at even indices
+          let i: number
+          if (stride > 1) {
+            // Decimated: 1 sample matches 1 pixel (approx)
+            i = px
+          } else {
+            // Full res: map pixel to sample index
+            i = Math.floor(px * samplesPerPixel)
+          }
+
+          const sampleIdx = i * 2 // complex interleaved
           if (sampleIdx >= samples.length) break
-          const y = midY - samples[sampleIdx] * scale
+
+          const val = samples[sampleIdx]
+          const y = midY - val * scale
           if (px === 0) ctx.moveTo(px, y)
           else ctx.lineTo(px, y)
         }
@@ -64,9 +82,18 @@ export function TracePlot(): React.ReactElement {
         ctx.strokeStyle = '#4dabf7'
         ctx.beginPath()
         for (let px = 0; px < rect.width; px++) {
-          const sampleIdx = Math.floor(px * samplesPerPixel) * 2 + 1 // complex: Q at odd indices
+          let i: number
+          if (stride > 1) {
+            i = px
+          } else {
+            i = Math.floor(px * samplesPerPixel)
+          }
+
+          const sampleIdx = i * 2 + 1
           if (sampleIdx >= samples.length) break
-          const y = midY - samples[sampleIdx] * scale
+
+          const val = samples[sampleIdx]
+          const y = midY - val * scale
           if (px === 0) ctx.moveTo(px, y)
           else ctx.lineTo(px, y)
         }

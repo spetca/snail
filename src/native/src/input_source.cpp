@@ -228,6 +228,27 @@ void InputSource::getSamples(size_t start, size_t length, std::complex<float>* d
     }
 }
 
+void InputSource::getSamplesStrided(size_t start, size_t length, size_t stride, std::complex<float>* dest) const {
+    if (!mmapData_ || !adapter_) {
+        throw std::runtime_error("No file open");
+    }
+
+    // Optimization for stride=1
+    if (stride == 1) {
+        getSamples(start, length, dest);
+        return;
+    }
+
+    for (size_t i = 0; i < length; i++) {
+        size_t srcIdx = start + i * stride;
+        if (srcIdx < totalSamples_) {
+            adapter_->copyRange(mmapData_, srcIdx, 1, &dest[i]);
+        } else {
+            dest[i] = std::complex<float>(0.0f, 0.0f);
+        }
+    }
+}
+
 void InputSource::detectFormat(const std::string& path, const std::string& overrideFormat) {
     if (!overrideFormat.empty()) {
         format_ = overrideFormat;
