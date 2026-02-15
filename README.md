@@ -1,12 +1,10 @@
-<div align="center">
-  <img src="snail.png" width="128" />
-  <h1>Snail</h1>
-  <p>A fast, cross-platform IQ file analyzer built for RF engineers and signal processing workflows.</p>
+# SNAIL!
 
-  ![Electron](https://img.shields.io/badge/Electron-33-blue)
-  ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
-  ![License](https://img.shields.io/badge/license-MIT-green)
-</div>
+A fast, cross-platform IQ file analyzer built for RF engineers and signal processing workflows.
+
+![Electron](https://img.shields.io/badge/Electron-33-blue)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
+![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
