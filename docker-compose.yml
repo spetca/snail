@@ -1,0 +1,12 @@
+services:
+  snail:
+    build: .
+    image: snail-vnc:latest
+    ports:
+      - "6080:6080"
+    volumes:
+      # Mount your IQ data directory here
+      - /User/Downloads:/Desktop
+    restart: unless-stopped
+    environment:
+      - VNC_RESOLUTION=1600x900

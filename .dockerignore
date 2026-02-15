@@ -1,0 +1,11 @@
+node_modules
+dist
+out
+src/native/build
+.git
+.github
+*.dmg
+*.AppImage
+*.deb
+*.exe
+.DS_Store
