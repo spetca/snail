@@ -4,7 +4,7 @@
   <p>A fast, cross-platform IQ file analyzer built for RF engineers and signal processing workflows.</p>
 
   ![Electron](https://img.shields.io/badge/Electron-33-blue)
-  ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)
+  ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
   ![License](https://img.shields.io/badge/license-MIT-green)
 </div>
 
@@ -29,9 +29,45 @@ Snail handles multi-gigabyte recordings with instant load times via memory-mappe
 
 ## Installation
 
-### Download
+### Docker with noVNC (Recommended 🚀)
 
-Pre-built binaries for macOS (Intel + Apple Silicon), Linux, and Windows are available on the [Releases](https://github.com/spetca/snail/releases) page.
+Run Snail in a Docker container and access it from any browser — no native dependencies needed. Uses noVNC to stream the desktop UI over WebSockets.
+
+<p align="center"><img src="pics/snail-docker.png" width="100%"></p>
+
+#### 1. Mount your IQ data
+
+Edit `docker-compose.yml` and point the volume to your local IQ files:
+```yaml
+volumes:
+  - /path/to/your/iq/files:/data
+```
+
+#### 2. Build and start the container
+
+```bash
+docker compose up --build
+```
+
+#### 3. Open in your browser
+
+Navigate to **[http://localhost:6080/vnc.html](http://localhost:6080/vnc.html)** and click **Connect**.
+
+#### 4. Open a file
+
+Inside the Snail window, click **Open File** and browse to `/data` — your mounted IQ files will be there.
+
+> **Tip:** The default resolution is 1600x900. Change it in `docker-compose.yml` via the `VNC_RESOLUTION` environment variable.
+
+### Pre-built Binaries
+
+Binaries for macOS (Apple Silicon) and Linux are available on the [Releases](https://github.com/spetca/snail/releases) page.
+
+**macOS note:** The app is not code-signed, so macOS will block it on first launch. After copying Snail to Applications, run:
+```bash
+xattr -cr /Applications/Snail.app
+```
+Or go to **System Settings > Privacy & Security** and click **Open Anyway**.
 
 ### Build from Source
 
@@ -70,9 +106,8 @@ npm run build && npm run dist
 ```
 
 Output binaries will be in `dist/`. The packager produces:
-- **macOS** — `.dmg` (arm64 + x64 universal)
+- **macOS** — `.dmg` (arm64)
 - **Linux** — `.AppImage` and `.deb`
-- **Windows** — `.exe` (NSIS installer)
 
 ## Usage
 
