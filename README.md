@@ -1,6 +1,6 @@
 # SNAIL!
 
-Forgive me lord, for I have 100% vibe coded a fast, cross-platform IQ file analyzer built for signal processing workflows.
+Forgive me lord, for I have 100% vibe coded a ~~fast~~ cross-platform IQ file analyzer built for signal processing workflows.
 
 ![Electron](https://img.shields.io/badge/Electron-33-blue)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
