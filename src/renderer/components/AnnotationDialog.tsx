@@ -13,6 +13,7 @@ export function AnnotationDialog({ onClose }: AnnotationDialogProps): React.Reac
   const fftSize = useStore((s) => s.fftSize)
   const zoomLevel = useStore((s) => s.zoomLevel)
   const scrollOffset = useStore((s) => s.scrollOffset)
+  const viewHeight = useStore((s) => s.viewHeight)
   const addAnnotation = useStore((s) => s.addAnnotation)
 
   const [label, setLabel] = useState('')
@@ -22,7 +23,9 @@ export function AnnotationDialog({ onClose }: AnnotationDialogProps): React.Reac
 
   if (!fileInfo) return <></>
 
-  const samplesPerPixel = fftSize / zoomLevel
+  // Stride must match SpectrogramView: integer rounded
+  const stride = Math.max(1, Math.round(fftSize / zoomLevel))
+  const samplesPerPixel = stride
   const sampleStart = Math.round(Math.min(cursors.x1, cursors.x2) * samplesPerPixel) + scrollOffset
   const sampleEnd = Math.round(Math.max(cursors.x1, cursors.x2) * samplesPerPixel) + scrollOffset
   const sampleCount = sampleEnd - sampleStart
@@ -57,14 +60,12 @@ export function AnnotationDialog({ onClose }: AnnotationDialogProps): React.Reac
         // We can approximate using the same mapping as CursorOverlay's measurements:
         // freqTop = (0.5 - min(y1,y2) / height) * sampleRate
         // We'll grab the height from a DOM query
-        const container = document.querySelector('[data-spectrogram-overlay]')
-        if (container) {
-          const height = container.getBoundingClientRect().height
-          const freqUpper = (0.5 - Math.min(cursors.y1, cursors.y2) / height) * sampleRate
-          const freqLower = (0.5 - Math.max(cursors.y1, cursors.y2) / height) * sampleRate
-          annotation.freqLowerEdge = freqLower
-          annotation.freqUpperEdge = freqUpper
-        }
+        // Use viewHeight from store which is the source of truth for the canvas size
+        const height = viewHeight
+        const freqUpper = (0.5 - Math.min(cursors.y1, cursors.y2) / height) * sampleRate
+        const freqLower = (0.5 - Math.max(cursors.y1, cursors.y2) / height) * sampleRate
+        annotation.freqLowerEdge = freqLower
+        annotation.freqUpperEdge = freqUpper
       }
 
       annotation.label = label.trim()

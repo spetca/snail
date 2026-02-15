@@ -338,3 +338,45 @@ void InputSource::parseSigMF(const std::string& metaPath) {
         // Invalid JSON, continue with defaults
     }
 }
+
+void InputSource::getSamplesDetected(size_t start, size_t length, size_t stride, std::complex<float>* dest) const {
+    if (!mmapData_ || !adapter_) {
+        throw std::runtime_error("No file open");
+    }
+
+    if (stride == 1) {
+        getSamples(start, length, dest);
+        return;
+    }
+
+    std::vector<std::complex<float>> buffer(stride);
+
+    for (size_t i = 0; i < length; i++) {
+        size_t blockStart = start + i * stride;
+        
+        if (blockStart >= totalSamples_) {
+            dest[i] = std::complex<float>(0.0f, 0.0f);
+            continue;
+        }
+
+        size_t blockLen = stride;
+        if (blockStart + blockLen > totalSamples_) {
+            blockLen = totalSamples_ - blockStart;
+        }
+
+        adapter_->copyRange(mmapData_, blockStart, blockLen, buffer.data());
+
+        float maxMag = -1.0f;
+        std::complex<float> maxSample(0.0f, 0.0f);
+
+        for (size_t j = 0; j < blockLen; j++) {
+            // L1 norm approximation for speed: |I| + |Q|
+            float mag = std::abs(buffer[j].real()) + std::abs(buffer[j].imag());
+            if (mag > maxMag) {
+                maxMag = mag;
+                maxSample = buffer[j];
+            }
+        }
+        dest[i] = maxSample;
+    }
+}

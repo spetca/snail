@@ -13,7 +13,7 @@ import numpy as np
 # === Configuration ===
 SAMPLE_RATE = 1_000_000          # 1 MHz
 CENTER_FREQ = 915_000_000        # 915 MHz
-TOTAL_SAMPLES = 134_217_728      # exactly 1 GiB at 8 bytes/sample
+TOTAL_SAMPLES = 134_217_728*5      # exactly 1 GiB at 8 bytes/sample
 CHUNK_SIZE = 1_000_000           # 1M samples per chunk (~8 MB)
 
 # LoRa signal parameters

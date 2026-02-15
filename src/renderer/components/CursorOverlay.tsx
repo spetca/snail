@@ -60,7 +60,9 @@ export function CursorOverlay(): React.ReactElement {
     ctx.clearRect(0, 0, rect.width, rect.height)
 
     // Draw annotations
-    const samplesPerPx = fftSize / zoomLevel
+    // Stride must match SpectrogramView: integer rounded
+    const stride = Math.max(1, Math.round(fftSize / zoomLevel))
+    const samplesPerPx = stride
     const totalBins = fftSize / 2
     const visibleBins = totalBins / yZoomLevel
     const yScrollBins = yScrollOffset / totalBins // normalized
@@ -156,7 +158,7 @@ export function CursorOverlay(): React.ReactElement {
       }
       ctx.setLineDash([])
 
-      const samplesPerPixel = fftSize / zoomLevel
+      const samplesPerPixel = Math.max(1, Math.round(fftSize / zoomLevel))
 
       // Draw yellow triangle grabbers on top
 
@@ -236,7 +238,8 @@ export function CursorOverlay(): React.ReactElement {
     if (!container) return null
     const rect = container.getBoundingClientRect()
 
-    const samplesPerPx = fftSize / zoomLevel
+    const stride = Math.max(1, Math.round(fftSize / zoomLevel))
+    const samplesPerPx = stride
     const totalBins = fftSize / 2
     const yScrollBins = yScrollOffset / totalBins
 
@@ -340,7 +343,7 @@ export function CursorOverlay(): React.ReactElement {
   // Clamp X pixel position so cursor can't exceed the file's sample range
   const clampX = useCallback((px: number, containerWidth: number): number => {
     if (!fileInfo) return Math.max(0, Math.min(containerWidth, px))
-    const stride = fftSize / zoomLevel
+    const stride = Math.max(1, Math.round(fftSize / zoomLevel))
     const maxPx = (fileInfo.totalSamples - scrollOffset) / stride
     return Math.max(0, Math.min(Math.min(containerWidth, maxPx), px))
   }, [fileInfo, fftSize, zoomLevel, scrollOffset])

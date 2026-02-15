@@ -77,7 +77,11 @@ Napi::Value GetSamples(const Napi::CallbackInfo& info) {
     // Allocate complex samples then flatten to interleaved I/Q
     std::vector<std::complex<float>> samples(length);
     try {
-        g_source.getSamplesStrided(start, length, stride, samples.data());
+        if (stride > 1) {
+            g_source.getSamplesDetected(start, length, stride, samples.data());
+        } else {
+            g_source.getSamplesStrided(start, length, stride, samples.data());
+        }
     } catch (const std::exception& e) {
         Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
         return env.Undefined();

@@ -36,7 +36,7 @@ export function TracePlot(): React.ReactElement {
     ctx.fillRect(0, 0, rect.width, TRACE_HEIGHT)
 
     const samplesPerPixel = fftSize / zoomLevel
-    const stride = Math.max(1, Math.floor(samplesPerPixel))
+    const stride = Math.max(1, Math.round(samplesPerPixel))
     const start = scrollOffset
 
     // We request enough valid samples to fill the screen width

@@ -111,6 +111,7 @@ public:
 
     void getSamples(size_t start, size_t length, std::complex<float>* dest) const;
     void getSamplesStrided(size_t start, size_t length, size_t stride, std::complex<float>* dest) const;
+    void getSamplesDetected(size_t start, size_t length, size_t stride, std::complex<float>* dest) const;
 
 private:
     void detectFormat(const std::string& path, const std::string& overrideFormat);

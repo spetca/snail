@@ -22,9 +22,10 @@ export function ExportDialog({ onClose }: ExportDialogProps): React.ReactElement
 
   if (!fileInfo) return <></>
 
+  const scrollOffset = useStore((s) => s.scrollOffset)
   const samplesPerPixel = fftSize / zoomLevel
-  const startSample = pendingExport ? pendingExport.start : Math.round(Math.min(cursors.x1, cursors.x2) * samplesPerPixel)
-  const endSample = pendingExport ? pendingExport.end : Math.round(Math.max(cursors.x1, cursors.x2) * samplesPerPixel)
+  const startSample = pendingExport ? pendingExport.start : Math.round(Math.min(cursors.x1, cursors.x2) * samplesPerPixel) + scrollOffset
+  const endSample = pendingExport ? pendingExport.end : Math.round(Math.max(cursors.x1, cursors.x2) * samplesPerPixel) + scrollOffset
   const isTargetedExport = !!pendingExport
 
   const handleExport = async () => {
