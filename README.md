@@ -8,6 +8,10 @@ Forgive me lord, for I have 100% vibe coded a ~~fast~~ cross-platform IQ file an
 
 ---
 
+## Why the name? 
+
+**S**pectral **N**avigation **A**nd **I**Q **L**ab - although i totally made the name "snail" first and then figured out what it means. Also something something about how snails leave trails and so do rf signals or something like that. 
+
 Snail handles multi-gigabyte recordings with instant load times via memory-mapped I/O and GPU-accelerated spectrogram rendering. Built on the shoulders of giants like [inspectrum](https://github.com/miek/inspectrum), [liquid-dsp](https://github.com/jgaeddert/liquid-dsp), and [FFTW](https://www.fftw.org/).
 
 
