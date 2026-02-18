@@ -11,10 +11,17 @@ export function StatusBar(): React.ReactElement {
   const scrollOffset = useStore((s) => s.scrollOffset)
   const xAxisMode = useStore((s) => s.xAxisMode)
   const cursors = useStore((s) => s.cursors)
+  const yZoomLevel = useStore((s) => s.yZoomLevel)
+  const yScrollOffset = useStore((s) => s.yScrollOffset)
+  const viewHeight = useStore((s) => s.viewHeight)
   const loading = useStore((s) => s.loading)
   const error = useStore((s) => s.error)
 
-  const samplesPerPixel = fftSize / zoomLevel
+  const samplesPerPixel = Math.max(1, Math.round(fftSize / zoomLevel))
+
+  // Convert cursor Y pixel positions to frequencies (same formula as CursorOverlay)
+  const yNormOffset = viewHeight > 0 ? yScrollOffset / (fftSize / 2) : 0
+  const pxToFreq = (y: number) => (0.5 - yNormOffset - y / viewHeight / yZoomLevel) * sampleRate
 
   return (
     <div
@@ -38,7 +45,8 @@ export function StatusBar(): React.ReactElement {
         <>
           <StatusItem label="Rate" value={formatSampleRate(sampleRate)} />
           <StatusItem label="FFT" value={`${fftSize}`} />
-          <StatusItem label="Zoom" value={`${zoomLevel}x`} />
+          <StatusItem label="X Zoom" value={`${zoomLevel.toFixed(2)}x`} />
+          {yZoomLevel > 1 && <StatusItem label="Y Zoom" value={`${yZoomLevel}x`} />}
           <StatusItem label="Offset" value={
             xAxisMode === 'time'
               ? formatTimeValue(scrollOffset / sampleRate)
@@ -49,12 +57,21 @@ export function StatusBar(): React.ReactElement {
             <>
               <Divider />
               <StatusItem
-                label="\u0394"
+                label="\u0394t"
                 value={
                   xAxisMode === 'time'
                     ? formatTimeValue(Math.abs(cursors.x2 - cursors.x1) * samplesPerPixel / sampleRate)
                     : `${Math.round(Math.abs(cursors.x2 - cursors.x1) * samplesPerPixel)}`
                 }
+              />
+            </>
+          )}
+          {cursors.enabled && cursors.y1 !== cursors.y2 && viewHeight > 0 && (
+            <>
+              <Divider />
+              <StatusItem
+                label="\u0394f"
+                value={formatFrequency(Math.abs(pxToFreq(cursors.y1) - pxToFreq(cursors.y2)))}
               />
             </>
           )}

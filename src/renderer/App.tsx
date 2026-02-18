@@ -99,30 +99,30 @@ export default function App(): React.ReactElement {
           )}
           {fileInfo ? (
             <>
-              <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
                   <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
                     <SpectrogramView />
                     <CursorOverlay />
                   </div>
-                  <ScrollBar
-                    orientation="horizontal"
-                    totalRange={totalSamples}
-                    viewportSize={xViewportSamples}
-                    value={scrollOffset}
-                    onChange={setScrollOffset}
-                  />
+                  {yZoomLevel > 1 && (
+                    <ScrollBar
+                      orientation="vertical"
+                      totalRange={totalFreqBins}
+                      viewportSize={visibleFreqBins}
+                      value={yScrollOffset}
+                      onChange={setYScrollOffset}
+                    />
+                  )}
+                  <FrequencyAxis />
                 </div>
-                {yZoomLevel > 1 && (
-                  <ScrollBar
-                    orientation="vertical"
-                    totalRange={totalFreqBins}
-                    viewportSize={visibleFreqBins}
-                    value={yScrollOffset}
-                    onChange={setYScrollOffset}
-                  />
-                )}
-                <FrequencyAxis />
+                <ScrollBar
+                  orientation="horizontal"
+                  totalRange={totalSamples}
+                  viewportSize={xViewportSamples}
+                  value={scrollOffset}
+                  onChange={setScrollOffset}
+                />
               </div>
               <TimeAxis />
               <TracePlot />

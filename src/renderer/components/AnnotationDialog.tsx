@@ -14,6 +14,8 @@ export function AnnotationDialog({ onClose }: AnnotationDialogProps): React.Reac
   const zoomLevel = useStore((s) => s.zoomLevel)
   const scrollOffset = useStore((s) => s.scrollOffset)
   const viewHeight = useStore((s) => s.viewHeight)
+  const yZoomLevel = useStore((s) => s.yZoomLevel)
+  const yScrollOffset = useStore((s) => s.yScrollOffset)
   const addAnnotation = useStore((s) => s.addAnnotation)
 
   const [label, setLabel] = useState('')
@@ -61,9 +63,10 @@ export function AnnotationDialog({ onClose }: AnnotationDialogProps): React.Reac
         // freqTop = (0.5 - min(y1,y2) / height) * sampleRate
         // We'll grab the height from a DOM query
         // Use viewHeight from store which is the source of truth for the canvas size
-        const height = viewHeight
-        const freqUpper = (0.5 - Math.min(cursors.y1, cursors.y2) / height) * sampleRate
-        const freqLower = (0.5 - Math.max(cursors.y1, cursors.y2) / height) * sampleRate
+        // Must match CursorOverlay/FrequencyAxis mapping: accounts for Y zoom and scroll
+        const yNormOffset = yScrollOffset / (fftSize / 2)
+        const freqUpper = (0.5 - yNormOffset - Math.min(cursors.y1, cursors.y2) / viewHeight / yZoomLevel) * sampleRate
+        const freqLower = (0.5 - yNormOffset - Math.max(cursors.y1, cursors.y2) / viewHeight / yZoomLevel) * sampleRate
         annotation.freqLowerEdge = freqLower
         annotation.freqUpperEdge = freqUpper
       }
