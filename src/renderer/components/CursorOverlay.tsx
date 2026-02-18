@@ -196,8 +196,10 @@ export function CursorOverlay(): React.ReactElement {
         ctx.closePath()
         ctx.fill()
 
-        // Absolute label for Y
-        const freqVal = (0.5 - y / rect.height) * sampleRate
+        // Absolute label for Y — must account for Y zoom/scroll (matches FrequencyAxis mapping)
+        const totalBinsY = fftSize / 2
+        const yNormOffset = yScrollOffset / totalBinsY
+        const freqVal = (0.5 - yNormOffset - (y / rect.height) / yZoomLevel) * sampleRate
         const label = formatFrequency(freqVal)
         ctx.font = '10px "JetBrains Mono", monospace'
         const tw = ctx.measureText(label).width

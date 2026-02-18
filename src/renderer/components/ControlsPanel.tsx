@@ -22,6 +22,8 @@ export function ControlsPanel(): React.ReactElement {
   const annotations = useStore((s) => s.annotations)
   const annotationsVisible = useStore((s) => s.annotationsVisible)
   const viewWidth = useStore((s) => s.viewWidth)
+  const yZoomLevel = useStore((s) => s.yZoomLevel)
+  const yScrollOffset = useStore((s) => s.yScrollOffset)
   const selectedAnnotationIndex = useStore((s) => s.selectedAnnotationIndex)
   const setSelectedAnnotationIndex = useStore((s) => s.setSelectedAnnotationIndex)
 
@@ -180,6 +182,8 @@ export function ControlsPanel(): React.ReactElement {
           scrollOffset={scrollOffset}
           sampleRate={sampleRate}
           viewHeight={viewHeight}
+          yZoomLevel={yZoomLevel}
+          yScrollOffset={yScrollOffset}
         />
       )}
 
@@ -253,22 +257,25 @@ export function ControlsPanel(): React.ReactElement {
   )
 }
 
-function CursorInfoSection({ cursors, fftSize, zoomLevel, scrollOffset, sampleRate, viewHeight }: {
+function CursorInfoSection({ cursors, fftSize, zoomLevel, scrollOffset, sampleRate, viewHeight, yZoomLevel, yScrollOffset }: {
   cursors: CursorState
   fftSize: number
   zoomLevel: number
   scrollOffset: number
   sampleRate: number
   viewHeight: number
+  yZoomLevel: number
+  yScrollOffset: number
 }) {
-  const samplesPerPx = fftSize / zoomLevel
+  const samplesPerPx = Math.max(1, Math.round(fftSize / zoomLevel))
   const s1 = Math.round(cursors.x1 * samplesPerPx + scrollOffset)
   const s2 = Math.round(cursors.x2 * samplesPerPx + scrollOffset)
   const sampleDelta = Math.abs(s2 - s1)
   const timeDelta = sampleDelta / sampleRate
 
+  const yNormOffset = viewHeight > 0 ? yScrollOffset / (fftSize / 2) : 0
   const freqFromY = (yPx: number) => viewHeight > 0
-    ? (0.5 - yPx / viewHeight) * sampleRate
+    ? (0.5 - yNormOffset - yPx / viewHeight / yZoomLevel) * sampleRate
     : 0
   const f1 = freqFromY(cursors.y1)
   const f2 = freqFromY(cursors.y2)
