@@ -3,6 +3,11 @@ import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc-handlers'
 
+// Linux requires disabling the sandbox due to kernel unprivileged userns restrictions
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('no-sandbox')
+}
+
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
     width: 1400,
@@ -11,7 +16,7 @@ function createWindow(): void {
     minHeight: 600,
     backgroundColor: '#0a0e14',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    frame: process.platform === 'darwin',
+    frame: true,
     show: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
