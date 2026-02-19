@@ -12,8 +12,18 @@ import { ScrollBar } from './components/ScrollBar'
 import { StatusBar } from './components/StatusBar'
 import { ExportDialog } from './components/ExportDialog'
 import { AnnotationDialog } from './components/AnnotationDialog'
+import { FFTWindow } from './components/FFTWindow'
+import { ConstellationWindow } from './components/ConstellationWindow'
 
 export default function App(): React.ReactElement {
+  const windowParam = new URLSearchParams(window.location.search).get('window')
+  if (windowParam === 'fft') {
+    return <FFTWindow />
+  }
+  if (windowParam === 'constellation') {
+    return <ConstellationWindow />
+  }
+
   const fileInfo = useStore((s) => s.fileInfo)
   const setFileInfo = useStore((s) => s.setFileInfo)
   const setLoading = useStore((s) => s.setLoading)
@@ -69,8 +79,6 @@ export default function App(): React.ReactElement {
         background: 'var(--bg1)'
       }}
     >
-      {navigator.userAgent.includes('Mac') && <div className="titlebar-drag" />}
-
       <Toolbar onExport={() => setShowExport(true)} onAnnotate={() => setShowAnnotation(true)} />
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>

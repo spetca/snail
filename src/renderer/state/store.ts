@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { FileInfo, SigMFAnnotation, SampleFormat } from '../../shared/sample-formats'
+import type { FileInfo, SigMFAnnotation, SampleFormat, FFTResult } from '../../shared/sample-formats'
 
 export type XAxisMode = 'samples' | 'time'
 
@@ -55,6 +55,24 @@ export interface AppState {
   tu: number
   cpLen: number
 
+  // FFT Window
+  showFFTWindow: boolean
+  fftSettings: {
+    fftSize: number
+    window: 'none' | 'hann' | 'hamming' | 'blackman'
+    shift: boolean
+    scale: 'abs' | 'log'
+    fs: number | null
+  }
+  fftResult: FFTResult | null
+  fftCursors: {
+    enabled: boolean
+    v1: number // normalized 0-1
+    v2: number
+    h1: number // normalized 0-1
+    h2: number
+  }
+
   // Actions
   setFileInfo: (info: FileInfo | null) => void
   setLoading: (loading: boolean) => void
@@ -88,6 +106,12 @@ export interface AppState {
   setCorrelationLoading: (loading: boolean) => void
   setTu: (tu: number) => void
   setCpLen: (cpLen: number) => void
+  setShowFFTWindow: (show: boolean) => void
+  setFFTSettings: (settings: Partial<AppState['fftSettings']>) => void
+  setFFTResult: (result: FFTResult | null) => void
+  setFFTCursorsEnabled: (enabled: boolean) => void
+  setFFTCursorV: (v1: number, v2: number) => void
+  setFFTCursorH: (h1: number, h2: number) => void
   snapToView: () => void
   reset: () => void
 }
@@ -121,7 +145,23 @@ const initialState = {
   correlationData: null as Float32Array | null,
   correlationLoading: false,
   tu: 1024,
-  cpLen: 256
+  cpLen: 256,
+  showFFTWindow: false,
+  fftSettings: {
+    fftSize: 2048,
+    window: 'hann' as const,
+    shift: true,
+    scale: 'log' as const,
+    fs: null as number | null
+  },
+  fftResult: null as FFTResult | null,
+  fftCursors: {
+    enabled: false,
+    v1: 0.25,
+    v2: 0.75,
+    h1: 0.25,
+    h2: 0.75
+  }
 }
 
 export const useStore = create<AppState>((set, get) => ({
@@ -219,6 +259,20 @@ export const useStore = create<AppState>((set, get) => ({
   setCorrelationLoading: (correlationLoading) => set({ correlationLoading }),
   setTu: (tu) => set({ tu, correlationData: null }),
   setCpLen: (cpLen) => set({ cpLen, correlationData: null }),
+  setShowFFTWindow: (show) => set({ showFFTWindow: show }),
+  setFFTSettings: (settings) => set((s) => ({
+    fftSettings: { ...s.fftSettings, ...settings }
+  })),
+  setFFTResult: (result) => set({ fftResult: result }),
+  setFFTCursorsEnabled: (enabled) => set((s) => ({
+    fftCursors: { ...s.fftCursors, enabled }
+  })),
+  setFFTCursorV: (v1, v2) => set((s) => ({
+    fftCursors: { ...s.fftCursors, v1, v2 }
+  })),
+  setFFTCursorH: (h1, h2) => set((s) => ({
+    fftCursors: { ...s.fftCursors, h1, h2 }
+  })),
   snapToView: () => {
     const s = get()
     if (!s.fileInfo) return

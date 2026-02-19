@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import { useStore, type XAxisMode, type CursorState } from '../state/store'
 import type { SigMFAnnotation } from '../../shared/sample-formats'
 import { formatTimeValue, formatFrequency } from '../../shared/units'
@@ -38,9 +38,23 @@ export function ControlsPanel(): React.ReactElement {
   const setScrollOffset = useStore((s) => s.setScrollOffset)
   const snapToView = useStore((s) => s.snapToView)
 
+  // Real-time updates to analysis windows
+  useEffect(() => {
+    if (cursors.enabled && cursors.x1 !== cursors.x2) {
+      const samplesPerPx = Math.max(1, Math.round(fftSize / zoomLevel))
+      const xStart = Math.min(cursors.x1, cursors.x2)
+      const xEnd = Math.max(cursors.x1, cursors.x2)
+
+      const start = Math.round(xStart * samplesPerPx + scrollOffset)
+      const length = Math.round((xEnd - xStart) * samplesPerPx)
+
+      window.snailAPI.sendFFTUpdate({ start, length, fs: sampleRate })
+      window.snailAPI.sendConstellationUpdate({ start, length, fs: sampleRate })
+    }
+  }, [cursors.x1, cursors.x2, cursors.enabled, fftSize, zoomLevel, scrollOffset, sampleRate])
+
   const handleAnnotationClick = (ann: SigMFAnnotation) => {
     if (!fileInfo) return
-    // Zoom so annotation fills ~80% of the viewport width
     const targetZoom = (viewWidth * fftSize * 0.8) / ann.sampleCount
     const newZoom = Math.min(fftSize, targetZoom)
     setZoomLevel(newZoom)
@@ -184,6 +198,28 @@ export function ControlsPanel(): React.ReactElement {
           viewHeight={viewHeight}
           yZoomLevel={yZoomLevel}
           yScrollOffset={yScrollOffset}
+          onTakeFFT={() => {
+            window.snailAPI.openFFTWindow()
+            const samplesPerPx = Math.max(1, Math.round(fftSize / zoomLevel))
+            const xStart = Math.min(cursors.x1, cursors.x2)
+            const xEnd = Math.max(cursors.x1, cursors.x2)
+            const start = Math.round(xStart * samplesPerPx + scrollOffset)
+            const length = Math.round((xEnd - xStart) * samplesPerPx)
+            setTimeout(() => {
+              window.snailAPI.sendFFTUpdate({ start, length, fs: sampleRate })
+            }, 500)
+          }}
+          onTakeConstellation={() => {
+            window.snailAPI.openConstellationWindow()
+            const samplesPerPx = Math.max(1, Math.round(fftSize / zoomLevel))
+            const xStart = Math.min(cursors.x1, cursors.x2)
+            const xEnd = Math.max(cursors.x1, cursors.x2)
+            const start = Math.round(xStart * samplesPerPx + scrollOffset)
+            const length = Math.round((xEnd - xStart) * samplesPerPx)
+            setTimeout(() => {
+              window.snailAPI.sendConstellationUpdate({ start, length, fs: sampleRate })
+            }, 500)
+          }}
         />
       )}
 
@@ -257,7 +293,10 @@ export function ControlsPanel(): React.ReactElement {
   )
 }
 
-function CursorInfoSection({ cursors, fftSize, zoomLevel, scrollOffset, sampleRate, viewHeight, yZoomLevel, yScrollOffset }: {
+function CursorInfoSection({
+  cursors, fftSize, zoomLevel, scrollOffset, sampleRate,
+  viewHeight, yZoomLevel, yScrollOffset, onTakeFFT, onTakeConstellation
+}: {
   cursors: CursorState
   fftSize: number
   zoomLevel: number
@@ -266,6 +305,8 @@ function CursorInfoSection({ cursors, fftSize, zoomLevel, scrollOffset, sampleRa
   viewHeight: number
   yZoomLevel: number
   yScrollOffset: number
+  onTakeFFT: () => void
+  onTakeConstellation: () => void
 }) {
   const samplesPerPx = Math.max(1, Math.round(fftSize / zoomLevel))
   const s1 = Math.round(cursors.x1 * samplesPerPx + scrollOffset)
@@ -289,6 +330,38 @@ function CursorInfoSection({ cursors, fftSize, zoomLevel, scrollOffset, sampleRa
       {cursors.y1 !== cursors.y2 && (
         <InfoRow label="BW" value={formatFrequency(bandwidth)} />
       )}
+      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+        <button
+          onClick={onTakeFFT}
+          style={{
+            flex: 1,
+            background: 'var(--accent)',
+            color: 'var(--bg0)',
+            fontWeight: 600,
+            padding: '6px 0',
+            borderRadius: 4,
+            border: 'none',
+            cursor: 'pointer'
+          }}
+        >
+          FFT
+        </button>
+        <button
+          onClick={onTakeConstellation}
+          style={{
+            flex: 1,
+            background: 'var(--bg3)',
+            color: 'var(--text)',
+            fontWeight: 600,
+            padding: '6px 0',
+            borderRadius: 4,
+            border: '1px solid var(--border)',
+            cursor: 'pointer'
+          }}
+        >
+          IQ
+        </button>
+      </div>
     </Section>
   )
 }

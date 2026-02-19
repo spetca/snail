@@ -61,6 +61,23 @@ export interface CorrelateRequest {
   cpLen?: number
 }
 
+export interface FFTConfigRequest {
+  startSample: number
+  length: number
+  fftSize: number
+  window: 'none' | 'hann' | 'hamming' | 'blackman'
+  shift: boolean
+  scale: 'abs' | 'log'
+  sampleRate?: number
+}
+
+export interface FFTResult {
+  data: Float32Array
+  frequencies?: Float32Array
+  maxPower: number
+  minPower: number
+}
+
 export const FORMAT_EXTENSIONS: Record<string, SampleFormat> = {
   '.cf32': 'cf32',
   '.fc32': 'cf32',

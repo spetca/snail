@@ -118,6 +118,12 @@ export function registerIpcHandlers(): void {
     return addon.correlate(req)
   })
 
+  ipcMain.handle(IPC.COMPUTE_FFT, async (_event, req: any) => {
+    const addon = loadNative()
+    if (!addon) throw new Error('Native addon not loaded')
+    return addon.computeFFT(req)
+  })
+
   ipcMain.handle(IPC.SAVE_ANNOTATION, async (_event, filePath: string, annotation: SigMFAnnotation) => {
     // Determine the .sigmf-meta path
     let metaPath: string

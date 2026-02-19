@@ -298,6 +298,98 @@ Napi::Value Correlate(const Napi::CallbackInfo& info) {
     return deferred.Promise();
 }
 
+// ── computeFFT(config) -> Promise<FFTResult> ────────────────────
+
+class FFTWorker : public Napi::AsyncWorker {
+public:
+    FFTWorker(
+        Napi::Env env,
+        Napi::Promise::Deferred deferred,
+        size_t startSample,
+        size_t length,
+        int fftSize,
+        const std::string& window,
+        bool shift,
+        bool logScale
+    ) : Napi::AsyncWorker(env),
+        deferred_(deferred),
+        startSample_(startSample),
+        length_(length),
+        fftSize_(fftSize),
+        window_(window),
+        shift_(shift),
+        logScale_(logScale) {}
+
+    void Execute() override {
+        // Ensure fftSize is reasonable
+        if (fftSize_ <= 0 || fftSize_ > 1024 * 1024) {
+            SetError("Invalid FFT size");
+            return;
+        }
+
+        // Read samples - if we want to average multiple windows, we'd do it here.
+        // For now, we take one FFT of size 'fftSize_' starting at 'startSample_'.
+        // If we want to cover the whole 'length_', we should probably zero-pad or average.
+        // The most common behavior for a single-window FFT is to take the first N samples.
+        std::vector<std::complex<float>> signal(fftSize_);
+        g_source.getSamples(startSample_, fftSize_, signal.data());
+
+        result_.resize(fftSize_);
+        FFTEngine engine(fftSize_);
+        engine.computeFFT(signal.data(), fftSize_, result_.data(), shift_, logScale_, window_);
+    }
+
+    void OnOK() override {
+        auto env = Env();
+        auto res = Napi::Object::New(env);
+        auto data = Napi::Float32Array::New(env, result_.size());
+        std::memcpy(data.Data(), result_.data(), result_.size() * sizeof(float));
+        res.Set("data", data);
+        
+        float minP = 1e20f, maxP = -1e20f;
+        for (float p : result_) {
+            if (p < minP) minP = p;
+            if (p > maxP) maxP = p;
+        }
+        res.Set("minPower", Napi::Number::New(env, minP));
+        res.Set("maxPower", Napi::Number::New(env, maxP));
+        
+        deferred_.Resolve(res);
+    }
+
+    void OnError(const Napi::Error& error) override {
+        deferred_.Reject(error.Value());
+    }
+
+private:
+    Napi::Promise::Deferred deferred_;
+    size_t startSample_;
+    size_t length_;
+    int fftSize_;
+    std::string window_;
+    bool shift_;
+    bool logScale_;
+    std::vector<float> result_;
+};
+
+Napi::Value ComputeFFT(const Napi::CallbackInfo& info) {
+    auto env = info.Env();
+    auto config = info[0].As<Napi::Object>();
+
+    size_t startSample = static_cast<size_t>(config.Get("startSample").As<Napi::Number>().DoubleValue());
+    size_t length = static_cast<size_t>(config.Get("length").As<Napi::Number>().DoubleValue());
+    int fftSize = config.Get("fftSize").As<Napi::Number>().Int32Value();
+    std::string window = config.Get("window").As<Napi::String>().Utf8Value();
+    bool shift = config.Get("shift").As<Napi::Boolean>().Value();
+    bool logScale = (config.Get("scale").As<Napi::String>().Utf8Value() == "log");
+
+    auto deferred = Napi::Promise::Deferred::New(env);
+    auto worker = new FFTWorker(env, deferred, startSample, length, fftSize, window, shift, logScale);
+    worker->Queue();
+
+    return deferred.Promise();
+}
+
 // ── readFileSamples(path, format, start, length) -> Float32Array ──
 // Reads samples from an arbitrary file without disturbing g_source
 
@@ -347,6 +439,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set("computeFFTTile", Napi::Function::New(env, ComputeFFTTile));
     exports.Set("exportSigMF", Napi::Function::New(env, ExportSigMF));
     exports.Set("correlate", Napi::Function::New(env, Correlate));
+    exports.Set("computeFFT", Napi::Function::New(env, ComputeFFT));
     exports.Set("readFileSamples", Napi::Function::New(env, ReadFileSamples));
     return exports;
 }

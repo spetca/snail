@@ -18,6 +18,16 @@ public:
     // Applies Hann window, computes FFT, DC-centers, returns log power
     void computePowerSpectrum(const std::complex<float>* input, float* output);
 
+    // New generic computeFFT for the FFT window
+    void computeFFT(
+        const std::complex<float>* input, 
+        int inputLen,
+        float* output,
+        bool shift,
+        bool logScale,
+        const std::string& windowType
+    );
+
     int size() const { return fftSize_; }
 
 private:

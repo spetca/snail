@@ -29,6 +29,8 @@ export function Toolbar({ onExport, onAnnotate }: ToolbarProps): React.ReactElem
     }
   }
 
+  const isMac = navigator.userAgent.includes('Mac')
+
   return (
     <div
       style={{
@@ -36,41 +38,55 @@ export function Toolbar({ onExport, onAnnotate }: ToolbarProps): React.ReactElem
         alignItems: 'center',
         gap: 8,
         padding: '8px 16px',
-        paddingTop: navigator.userAgent.includes('Mac') ? 42 : 8,
+        paddingTop: isMac ? 42 : 8,
         background: 'var(--bg2)',
         borderBottom: '1px solid var(--border)',
-        WebkitAppRegion: 'no-drag' as any
-      }}
+        WebkitAppRegion: isMac ? 'drag' : 'no-drag'
+      } as any}
     >
-      <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--accent)', marginRight: 12 }}>
+      <span style={{
+        fontWeight: 600,
+        fontSize: 14,
+        color: 'var(--accent)',
+        marginRight: 12,
+        WebkitAppRegion: 'no-drag'
+      } as any}>
         Snail
       </span>
 
-      <button onClick={handleOpen}>Open File</button>
+      <button onClick={handleOpen} style={{ WebkitAppRegion: 'no-drag' } as any}>Open File</button>
 
       {fileInfo && (
         <>
-          <button onClick={onExport}>Export SigMF</button>
+          <button onClick={onExport} style={{ WebkitAppRegion: 'no-drag' } as any}>Export SigMF</button>
           {cursors.enabled && (
-            <button onClick={onAnnotate}>Annotate</button>
+            <button onClick={onAnnotate} style={{ WebkitAppRegion: 'no-drag' } as any}>Annotate</button>
           )}
           <button
             onClick={() => setCorrelationEnabled(!correlationEnabled)}
-            style={correlationEnabled ? {
-              background: 'var(--accent)',
-              color: '#000',
-              borderColor: 'var(--accent)'
-            } : undefined}
+            style={{
+              WebkitAppRegion: 'no-drag' as any,
+              ...(correlationEnabled ? {
+                background: 'var(--accent)',
+                color: '#000',
+                borderColor: 'var(--accent)'
+              } : {})
+            }}
           >
             Correlate{correlationEnabled ? ' ON' : ''}
           </button>
         </>
       )}
 
-      <div style={{ flex: 1 }} />
+      <div style={{ flex: 1, height: '100%', WebkitAppRegion: 'drag' } as any} />
 
       {fileInfo && (
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
+        <span style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: 11,
+          color: 'var(--text-muted)',
+          WebkitAppRegion: 'no-drag' as any
+        }}>
           {fileInfo.path.split('/').pop()}
         </span>
       )}
