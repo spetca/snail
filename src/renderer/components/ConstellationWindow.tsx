@@ -2,11 +2,15 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useStore } from '../state/store'
 
 type DecimateMode = 'factor' | 'rate'
+type AnalysisMode = 'time' | 'ofdm'
 
 export function ConstellationWindow(): React.ReactElement | null {
     const sampleRate = useStore((s) => s.sampleRate)
     const [cursorRange, setCursorRange] = useState<{ start: number, length: number, fs: number } | null>(null)
     const [rawData, setRawData] = useState<Float32Array | null>(null)
+
+    // UI State
+    const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('time')
 
     // CFO adjustments
     const [cfoCoarse, setCfoCoarse] = useState(0)
@@ -14,12 +18,18 @@ export function ConstellationWindow(): React.ReactElement | null {
     const [cfoCoarseInput, setCfoCoarseInput] = useState('0')
     const [cfoFineInput, setCfoFineInput] = useState('0')
 
-    // Decimation
+    // Decimation (Time Mode)
     const [decimateMode, setDecimateMode] = useState<DecimateMode>('factor')
     const [decimateFactor, setDecimateFactor] = useState(1)
     const [targetRateInput, setTargetRateInput] = useState('1000000')
 
+    // OFDM Mode
+    const [ofdmFftSize, setOfdmFftSize] = useState(1024)
+    const [selectedBin, setSelectedBin] = useState(0)
+    const [autoPick, setAutoPick] = useState(true)
+
     const canvasRef = useRef<HTMLCanvasElement>(null)
+    const miniFftRef = useRef<HTMLCanvasElement>(null)
     const MARGIN = 40
 
     // Listen for updates from main window
@@ -30,9 +40,10 @@ export function ConstellationWindow(): React.ReactElement | null {
     }, [])
 
     // Fetch raw samples when cursor range changes
+    // We fetch a larger chunk for OFDM to get better statistics
     useEffect(() => {
         if (cursorRange) {
-            const length = Math.min(cursorRange.length, 100000)
+            const length = Math.min(cursorRange.length, 250000)
             window.snailAPI.getSamples(cursorRange.start, length).then(setRawData).catch(console.error)
         }
     }, [cursorRange])
@@ -40,48 +51,144 @@ export function ConstellationWindow(): React.ReactElement | null {
     const fs = cursorRange?.fs || sampleRate
     const totalCfo = cfoCoarse + cfoFine
 
-    // Parse target rate from input (handles scientific notation like 3.84e6)
+    // Parse target rate
     const targetRate = useMemo(() => {
         const parsed = Number(targetRateInput)
         return isNaN(parsed) || parsed <= 0 ? 1000000 : parsed
     }, [targetRateInput])
 
     useEffect(() => {
-        if (decimateMode === 'rate') {
+        if (decimateMode === 'rate' && analysisMode === 'time') {
             const factor = Math.max(1, Math.floor(fs / targetRate))
             setDecimateFactor(factor)
         }
-    }, [decimateMode, targetRate, fs])
+    }, [decimateMode, targetRate, fs, analysisMode])
 
-    // Apply CFO and decimation
-    const processedData = useMemo(() => {
+    // Correct raw data for CFO
+    const correctedRaw = useMemo(() => {
         if (!rawData) return null
-
-        const decFactor = Math.max(1, Math.floor(decimateFactor))
-        const numSamples = Math.floor(rawData.length / 2)
-        const result = new Float32Array(Math.ceil(numSamples / decFactor) * 2)
-
-        let outIdx = 0
+        const numSamples = rawData.length / 2
+        const result = new Float32Array(rawData.length)
         const phaseInc = (2 * Math.PI * totalCfo) / fs
 
-        for (let i = 0; i < numSamples; i += decFactor) {
+        for (let i = 0; i < numSamples; i++) {
             const iVal = rawData[i * 2]
             const qVal = rawData[i * 2 + 1]
-
             if (totalCfo === 0) {
-                result[outIdx * 2] = iVal
-                result[outIdx * 2 + 1] = qVal
+                result[i * 2] = iVal
+                result[i * 2 + 1] = qVal
             } else {
                 const phase = phaseInc * i
                 const cosP = Math.cos(phase)
                 const sinP = Math.sin(phase)
-                result[outIdx * 2] = iVal * cosP - qVal * sinP
-                result[outIdx * 2 + 1] = iVal * sinP + qVal * cosP
+                result[i * 2] = iVal * cosP - qVal * sinP
+                result[i * 2 + 1] = iVal * sinP + qVal * cosP
             }
-            outIdx++
         }
         return result
-    }, [rawData, totalCfo, decimateFactor, fs])
+    }, [rawData, totalCfo, fs])
+
+    // OFDM Analysis Logic
+    const ofdmAnalysis = useMemo(() => {
+        if (!correctedRaw || analysisMode !== 'ofdm') return null
+
+        const n = ofdmFftSize
+        const numBlocks = Math.floor(correctedRaw.length / 2 / n)
+        const avgSpectrum = new Float32Array(n)
+
+        // Prepare FFT buffers
+        const re = new Float64Array(n)
+        const im = new Float64Array(n)
+
+        const extractedPoints = new Float32Array(numBlocks * 2)
+
+        // Loop over blocks to compute average spectrum and extract bin
+        for (let b = 0; b < numBlocks; b++) {
+            for (let i = 0; i < n; i++) {
+                re[i] = correctedRaw[(b * n + i) * 2]
+                im[i] = correctedRaw[(b * n + i) * 2 + 1]
+            }
+
+            tsfft(re, im)
+
+            // Accumulate spectrum
+            for (let i = 0; i < n; i++) {
+                const magSq = re[i] * re[i] + im[i] * im[i]
+                avgSpectrum[i] += magSq
+            }
+
+            // If we already know the bin, extract it
+            if (!autoPick) {
+                const shiftedBin = (selectedBin + n) % n
+                extractedPoints[b * 2] = re[shiftedBin] / n
+                extractedPoints[b * 2 + 1] = im[shiftedBin] / n
+            }
+        }
+
+        // Finalize spectrum (dB)
+        for (let i = 0; i < n; i++) {
+            avgSpectrum[i] = 10 * Math.log10(avgSpectrum[i] / numBlocks + 1e-12)
+        }
+
+        // Shift spectrum for display (DC center)
+        const displaySpectrum = new Float32Array(n)
+        for (let i = 0; i < n; i++) {
+            displaySpectrum[i] = avgSpectrum[(i + n / 2) % n]
+        }
+
+        // Auto-pick biggest bin (ignoring DC if possible, but let's just pick max for now)
+        let actualBin = selectedBin
+        if (autoPick) {
+            let maxVal = -Infinity
+            let maxIdx = 0
+            for (let i = 0; i < n; i++) {
+                // Ignore some bins at the edges/DC to avoid artifacts if needed
+                if (avgSpectrum[i] > maxVal) {
+                    maxVal = avgSpectrum[i]
+                    maxIdx = i
+                }
+            }
+            actualBin = maxIdx
+            // Re-extract since we didn't do it in the first pass
+            for (let b = 0; b < numBlocks; b++) {
+                // We'd need to re-run the FFT or store results. 
+                // To keep it simple, let's just do a second pass ONLY for the selected bin extraction
+                let reBin = 0, imBin = 0;
+                const angleScale = -2 * Math.PI * actualBin / n;
+                for (let i = 0; i < n; i++) {
+                    const r = correctedRaw[(b * n + i) * 2]
+                    const c = correctedRaw[(b * n + i) * 2 + 1]
+                    const ang = i * angleScale;
+                    const cosW = Math.cos(ang), sinW = Math.sin(ang);
+                    reBin += r * cosW - c * sinW;
+                    imBin += r * sinW + c * cosW;
+                }
+                extractedPoints[b * 2] = reBin / n
+                extractedPoints[b * 2 + 1] = imBin / n
+            }
+        }
+
+        return { spectrum: displaySpectrum, points: extractedPoints, lockedBin: actualBin }
+    }, [correctedRaw, analysisMode, ofdmFftSize, selectedBin, autoPick])
+
+    // Final processed data for plotting
+    const processedData = useMemo(() => {
+        if (analysisMode === 'time') {
+            if (!correctedRaw) return null
+            const decFactor = Math.max(1, Math.floor(decimateFactor))
+            const numSamples = Math.floor(correctedRaw.length / 2)
+            const result = new Float32Array(Math.ceil(numSamples / decFactor) * 2)
+            let outIdx = 0
+            for (let i = 0; i < numSamples; i += decFactor) {
+                result[outIdx * 2] = correctedRaw[i * 2]
+                result[outIdx * 2 + 1] = correctedRaw[i * 2 + 1]
+                outIdx++
+            }
+            return result
+        } else {
+            return ofdmAnalysis?.points || null
+        }
+    }, [correctedRaw, analysisMode, decimateFactor, ofdmAnalysis])
 
     const drawPlot = useCallback(() => {
         if (!canvasRef.current || !processedData) return
@@ -96,7 +203,7 @@ export function ConstellationWindow(): React.ReactElement | null {
         ctx.scale(dpr, dpr)
 
         ctx.clearRect(0, 0, size, size)
-        ctx.fillStyle = '#10141b' // Slightly darker
+        ctx.fillStyle = '#10141b'
         ctx.fillRect(0, 0, size, size)
 
         const plotSize = size - MARGIN * 2
@@ -118,39 +225,86 @@ export function ConstellationWindow(): React.ReactElement | null {
         maxAmp *= 1.1
 
         const scale = (plotSize / 2) / maxAmp
-
-        ctx.strokeStyle = '#00f7c2' // Brighter accent
+        ctx.strokeStyle = analysisMode === 'time' ? '#00f7c2' : '#4dabf7'
         ctx.lineWidth = 1
 
-        const markSize = 2.5
+        const markSize = analysisMode === 'time' ? 2.5 : 3
         for (let i = 0; i < processedData.length / 2; i++) {
             const x = center + processedData[i * 2] * scale
             const y = center - processedData[i * 2 + 1] * scale
-
             ctx.beginPath()
-            ctx.moveTo(x - markSize, y - markSize)
-            ctx.lineTo(x + markSize, y + markSize)
-            ctx.moveTo(x + markSize, y - markSize)
-            ctx.lineTo(x - markSize, y + markSize)
+            ctx.moveTo(x - markSize, y - markSize); ctx.lineTo(x + markSize, y + markSize)
+            ctx.moveTo(x + markSize, y - markSize); ctx.lineTo(x - markSize, y + markSize)
             ctx.stroke()
         }
-
-    }, [processedData])
+    }, [processedData, analysisMode])
 
     useEffect(() => {
         drawPlot()
     }, [drawPlot])
 
+    // Draw Mini FFT
+    useEffect(() => {
+        if (!miniFftRef.current || !ofdmAnalysis) return
+        const canvas = miniFftRef.current
+        const ctx = canvas.getContext('2d')
+        if (!ctx) return
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+        const spectrum = ofdmAnalysis.spectrum
+        const n = spectrum.length
+
+        let min = Infinity, max = -Infinity
+        for (let i = 0; i < n; i++) {
+            if (spectrum[i] < min) min = spectrum[i]
+            if (spectrum[i] > max) max = spectrum[i]
+        }
+        // Normalize for view
+        const range = Math.max(20, max - min)
+        const floor = max - range
+
+        ctx.strokeStyle = '#4dabf7'
+        ctx.beginPath()
+        for (let i = 0; i < canvas.width; i++) {
+            const idx = Math.floor(i * n / canvas.width)
+            const val = spectrum[idx]
+            const y = (1 - (val - floor) / range) * canvas.height
+            if (i === 0) ctx.moveTo(i, y)
+            else ctx.lineTo(i, y)
+        }
+        ctx.stroke()
+
+        // Highlight selected bin
+        const binIdx = (ofdmAnalysis.lockedBin + n / 2) % n
+        const binX = binIdx * canvas.width / n
+        ctx.strokeStyle = '#ff922b'
+        ctx.beginPath()
+        ctx.moveTo(binX, 0); ctx.lineTo(binX, canvas.height)
+        ctx.stroke()
+    }, [ofdmAnalysis])
+
     const cfoCoarseLimit = fs * 0.1
-    const cfoFineLimit = fs * 0.001 // Fine is 0.1% of FS
+    const cfoFineLimit = fs * 0.001
 
     return (
         <div style={containerStyle}>
             <div style={headerStyle}>
-                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Constellation Analysis</h3>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                    <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Constellation</h3>
+                    <div style={modeToggleStyle}>
+                        <button
+                            onClick={() => setAnalysisMode('time')}
+                            style={analysisMode === 'time' ? activeModeStyle : inactiveModeStyle}
+                        >Time</button>
+                        <button
+                            onClick={() => setAnalysisMode('ofdm')}
+                            style={analysisMode === 'ofdm' ? activeModeStyle : inactiveModeStyle}
+                        >OFDM</button>
+                    </div>
+                </div>
                 {cursorRange && (
                     <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                        Selection: {(cursorRange.length / fs).toExponential(2)}s | Rates: {(fs / 1e6).toFixed(2)} {'->'} {(fs / decimateFactor / 1e6).toFixed(2)} MHz
+                        Selection: {(cursorRange.length / fs).toExponential(2)}s | Rates: {(fs / 1e6).toFixed(2)} MHz
                     </span>
                 )}
             </div>
@@ -171,8 +325,7 @@ export function ConstellationWindow(): React.ReactElement | null {
                             value={cfoCoarse}
                             onChange={(e) => {
                                 const v = Number(e.target.value)
-                                setCfoCoarse(v)
-                                setCfoCoarseInput(v.toString())
+                                setCfoCoarse(v); setCfoCoarseInput(v.toString())
                             }}
                             style={{ width: '100%' }}
                         />
@@ -198,8 +351,7 @@ export function ConstellationWindow(): React.ReactElement | null {
                             value={cfoFine}
                             onChange={(e) => {
                                 const v = Number(e.target.value)
-                                setCfoFine(v)
-                                setCfoFineInput(v.toString())
+                                setCfoFine(v); setCfoFineInput(v.toString())
                             }}
                             style={{ width: '100%' }}
                         />
@@ -226,44 +378,60 @@ export function ConstellationWindow(): React.ReactElement | null {
                         }} style={smallBtnStyle}>Reset Offset</button>
                     </div>
 
-                    <div style={sidebarSectionStyle}>
-                        <label style={labelStyle}>Decimation Mode</label>
-                        <div style={modeToggleStyle}>
-                            <button
-                                onClick={() => setDecimateMode('factor')}
-                                style={decimateMode === 'factor' ? activeModeStyle : inactiveModeStyle}
-                            >Factor</button>
-                            <button
-                                onClick={() => setDecimateMode('rate')}
-                                style={decimateMode === 'rate' ? activeModeStyle : inactiveModeStyle}
-                            >Target Rate</button>
-                        </div>
+                    <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '8px 0' }} />
 
-                        {decimateMode === 'factor' ? (
-                            <select
-                                value={decimateFactor}
-                                onChange={(e) => setDecimateFactor(Number(e.target.value))}
-                                style={inputStyle}
-                            >
-                                {[1, 2, 4, 8, 16, 32, 64, 128].map(opt => (
-                                    <option key={opt} value={opt}>{opt}x</option>
-                                ))}
-                            </select>
-                        ) : (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                <input
-                                    type="text"
-                                    value={targetRateInput}
-                                    onChange={(e) => setTargetRateInput(e.target.value)}
-                                    style={inputStyle}
-                                    placeholder="e.g. 3.84e6"
-                                />
-                                <div style={{ fontSize: 10, color: 'var(--text-muted)', textAlign: 'right' }}>
-                                    Factor: {decimateFactor}x
-                                </div>
+                    {analysisMode === 'time' ? (
+                        <div style={sidebarSectionStyle}>
+                            <label style={labelStyle}>Decimation</label>
+                            <div style={modeToggleStyle}>
+                                <button onClick={() => setDecimateMode('factor')} style={decimateMode === 'factor' ? activeModeStyle : inactiveModeStyle}>Factor</button>
+                                <button onClick={() => setDecimateMode('rate')} style={decimateMode === 'rate' ? activeModeStyle : inactiveModeStyle}>Rate</button>
                             </div>
-                        )}
-                    </div>
+                            {decimateMode === 'factor' ? (
+                                <select value={decimateFactor} onChange={(e) => setDecimateFactor(Number(e.target.value))} style={inputStyle}>
+                                    {[1, 2, 4, 8, 16, 32, 64, 128].map(opt => <option key={opt} value={opt}>{opt}x</option>)}
+                                </select>
+                            ) : (
+                                <input type="text" value={targetRateInput} onChange={(e) => setTargetRateInput(e.target.value)} style={inputStyle} placeholder="3.84e6" />
+                            )}
+                        </div>
+                    ) : (
+                        <div style={sidebarSectionStyle}>
+                            <label style={labelStyle}>OFDM Parameters</label>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>FFT Size</span>
+                                <select
+                                    value={ofdmFftSize}
+                                    onChange={(e) => setOfdmFftSize(Number(e.target.value))}
+                                    style={{ ...inputStyle, width: 80 }}
+                                >
+                                    {[64, 128, 256, 512, 1024, 2048, 4096].map(s => <option key={s} value={s}>{s}</option>)}
+                                </select>
+                            </div>
+
+                            <label style={{ ...labelStyle, marginTop: 12 }}>Pick Subcarrier</label>
+                            <div
+                                style={{ position: 'relative', width: '100%', height: 60, background: 'var(--bg3)', borderRadius: 4, cursor: 'crosshair' }}
+                                onClick={(e) => {
+                                    const rect = e.currentTarget.getBoundingClientRect()
+                                    const x = e.clientX - rect.left
+                                    const binCenterIdx = Math.floor(x * ofdmFftSize / rect.width)
+                                    const bin = (binCenterIdx - ofdmFftSize / 2 + ofdmFftSize) % ofdmFftSize
+                                    setSelectedBin(bin)
+                                    setAutoPick(false)
+                                }}
+                            >
+                                <canvas ref={miniFftRef} width={200} height={60} style={{ width: '100%', height: '100%' }} />
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                                <span style={{ fontSize: 11, color: '#ff922b', fontWeight: 600 }}>Bin: {ofdmAnalysis?.lockedBin}</span>
+                                <button
+                                    onClick={() => setAutoPick(true)}
+                                    style={{ ...smallBtnStyle, background: autoPick ? 'var(--accent)' : 'var(--bg3)', color: autoPick ? 'var(--bg0)' : 'var(--text)' }}
+                                >{autoPick ? 'Locked Peak' : 'Unlock'}</button>
+                            </div>
+                        </div>
+                    )}
 
                     <div style={{ ...sidebarSectionStyle, marginTop: 'auto' }}>
                         <div style={infoRowStyle}>
@@ -277,133 +445,69 @@ export function ConstellationWindow(): React.ReactElement | null {
     )
 }
 
+// Simple Radix-2 FFT
+function tsfft(re: Float64Array, im: Float64Array) {
+    const n = re.length
+    for (let i = 1, j = 0; i < n; i++) {
+        let bit = n >> 1
+        for (; j & bit; bit >>= 1) j ^= bit
+        j ^= bit
+        if (i < j) {
+            [re[i], re[j]] = [re[j], re[i]]
+            [im[i], im[j]] = [im[j], im[i]]
+        }
+    }
+    for (let len = 2; len <= n; len <<= 1) {
+        const ang = -2 * Math.PI / len
+        const wlen_re = Math.cos(ang), wlen_im = Math.sin(ang)
+        for (let i = 0; i < n; i += len) {
+            let w_re = 1, w_im = 0
+            for (let j = 0; j < len / 2; j++) {
+                const tr = re[i + j + len / 2] * w_re - im[i + j + len / 2] * w_im
+                const ti = re[i + j + len / 2] * w_im + im[i + j + len / 2] * w_re
+                re[i + j + len / 2] = re[i + j] - tr
+                im[i + j + len / 2] = im[i + j] - ti
+                re[i + j] += tr
+                im[i + j] += ti
+                const tmp = w_re * wlen_re - w_im * wlen_im
+                w_im = w_re * wlen_im + w_im * wlen_re
+                w_re = tmp
+            }
+        }
+    }
+}
+
 const containerStyle: React.CSSProperties = {
-    width: '100vw',
-    height: '100vh',
-    background: 'var(--bg1)',
-    display: 'flex',
-    flexDirection: 'column',
-    overflow: 'hidden'
+    width: '100vw', height: '100vh', background: 'var(--bg1)', display: 'flex', flexDirection: 'column', overflow: 'hidden'
 }
-
 const headerStyle: React.CSSProperties = {
-    padding: '12px 20px',
-    borderBottom: '1px solid var(--border)',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    background: 'var(--bg2)'
+    padding: '12px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg2)'
 }
-
-const bodyStyle: React.CSSProperties = {
-    flex: 1,
-    display: 'flex',
-    overflow: 'hidden'
-}
-
+const bodyStyle: React.CSSProperties = { flex: 1, display: 'flex', overflow: 'hidden' }
 const plotContainerStyle: React.CSSProperties = {
-    flex: 1,
-    background: '#0a0e14',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20
+    flex: 1, background: '#0a0e14', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20
 }
-
 const sidebarStyle: React.CSSProperties = {
-    width: 240,
-    background: 'var(--bg2)',
-    borderLeft: '1px solid var(--border)',
-    padding: 16,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 16,
-    overflowY: 'auto'
+    width: 240, background: 'var(--bg2)', borderLeft: '1px solid var(--border)', padding: 16, display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto'
 }
-
-const sidebarSectionStyle: React.CSSProperties = {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 6
-}
-
+const sidebarSectionStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 6 }
 const labelStyle: React.CSSProperties = {
-    fontSize: 10,
-    fontWeight: 700,
-    color: 'var(--text-muted)',
-    textTransform: 'uppercase',
-    letterSpacing: '0.05em'
+    fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em'
 }
-
 const inputStyle: React.CSSProperties = {
-    width: '100%',
-    background: 'var(--bg3)',
-    border: '1px solid var(--border)',
-    color: 'var(--text)',
-    padding: '6px 8px',
-    borderRadius: 4,
-    outline: 'none',
-    fontFamily: 'var(--font-mono)',
-    fontSize: 12,
-    textAlign: 'center'
+    width: '100%', background: 'var(--bg3)', border: '1px solid var(--border)', color: 'var(--text)', padding: '6px 8px', borderRadius: 4, outline: 'none', fontFamily: 'var(--font-mono)', fontSize: 12, textAlign: 'center'
 }
-
-const modeToggleStyle: React.CSSProperties = {
-    display: 'flex',
-    background: 'var(--bg3)',
-    borderRadius: 4,
-    padding: 2,
-    gap: 2
-}
-
+const modeToggleStyle: React.CSSProperties = { display: 'flex', background: 'var(--bg3)', borderRadius: 4, padding: 2, gap: 2 }
 const activeModeStyle: React.CSSProperties = {
-    flex: 1,
-    background: 'var(--accent)',
-    color: 'var(--bg0)',
-    border: 'none',
-    borderRadius: 3,
-    fontSize: 10,
-    fontWeight: 700,
-    padding: '4px 0',
-    cursor: 'pointer'
+    flex: 1, background: 'var(--accent)', color: 'var(--bg0)', border: 'none', borderRadius: 3, fontSize: 10, fontWeight: 700, padding: '4px 0', cursor: 'pointer'
 }
-
 const inactiveModeStyle: React.CSSProperties = {
-    flex: 1,
-    background: 'transparent',
-    color: 'var(--text-muted)',
-    border: 'none',
-    borderRadius: 3,
-    fontSize: 10,
-    padding: '4px 0',
-    cursor: 'pointer'
+    flex: 1, background: 'transparent', color: 'var(--text-muted)', border: 'none', borderRadius: 3, fontSize: 10, padding: '4px 0', cursor: 'pointer'
 }
-
-const infoRowStyle: React.CSSProperties = {
-    display: 'flex',
-    justifyContent: 'space-between',
-    fontSize: 11,
-    color: 'var(--text-muted)'
-}
-
+const infoRowStyle: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-muted)' }
 const valDisplayStyle: React.CSSProperties = {
-    fontSize: 14,
-    fontFamily: 'var(--font-mono)',
-    textAlign: 'center',
-    background: 'rgba(0, 247, 194, 0.05)',
-    padding: '8px',
-    borderRadius: 4,
-    border: '1px solid rgba(0, 247, 194, 0.2)',
-    color: '#00f7c2'
+    fontSize: 14, fontFamily: 'var(--font-mono)', textAlign: 'center', background: 'rgba(0, 247, 194, 0.05)', padding: '8px', borderRadius: 4, border: '1px solid rgba(0, 247, 194, 0.2)', color: '#00f7c2'
 }
-
 const smallBtnStyle: React.CSSProperties = {
-    padding: '4px 8px',
-    fontSize: 10,
-    borderRadius: 3,
-    background: 'var(--bg3)',
-    border: '1px solid var(--border)',
-    color: 'var(--text)',
-    cursor: 'pointer',
-    fontWeight: 600
+    padding: '4px 8px', fontSize: 10, borderRadius: 3, background: 'var(--bg3)', border: '1px solid var(--border)', color: 'var(--text)', cursor: 'pointer', fontWeight: 600
 }
