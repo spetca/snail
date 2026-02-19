@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useStore } from '../state/store'
 
-type DecimateMode = 'factor' | 'rate'
+type DecimateMode = 'factor' | 'rate' | 'selection'
 type AnalysisMode = 'time' | 'ofdm'
 
 export function ConstellationWindow(): React.ReactElement | null {
@@ -18,7 +18,7 @@ export function ConstellationWindow(): React.ReactElement | null {
     const [cfoCoarseInput, setCfoCoarseInput] = useState('0')
     const [cfoFineInput, setCfoFineInput] = useState('0')
 
-    // Decimation (Time Mode)
+    // Decimation
     const [decimateMode, setDecimateMode] = useState<DecimateMode>('factor')
     const [decimateFactor, setDecimateFactor] = useState(1)
     const [targetRateInput, setTargetRateInput] = useState('1000000')
@@ -40,7 +40,6 @@ export function ConstellationWindow(): React.ReactElement | null {
     }, [])
 
     // Fetch raw samples when cursor range changes
-    // We fetch a larger chunk for OFDM to get better statistics
     useEffect(() => {
         if (cursorRange) {
             const length = Math.min(cursorRange.length, 250000)
@@ -57,12 +56,17 @@ export function ConstellationWindow(): React.ReactElement | null {
         return isNaN(parsed) || parsed <= 0 ? 1000000 : parsed
     }, [targetRateInput])
 
+    // Update decimateFactor based on mode
     useEffect(() => {
-        if (decimateMode === 'rate' && analysisMode === 'time') {
+        if (decimateMode === 'rate') {
             const factor = Math.max(1, Math.floor(fs / targetRate))
             setDecimateFactor(factor)
+        } else if (decimateMode === 'selection' && cursorRange) {
+            // "Time selection as 1 symbol" logic
+            const factor = Math.max(1, Math.floor(cursorRange.length / ofdmFftSize))
+            setDecimateFactor(factor)
         }
-    }, [decimateMode, targetRate, fs, analysisMode])
+    }, [decimateMode, targetRate, fs, cursorRange, ofdmFftSize])
 
     // Correct raw data for CFO
     const correctedRaw = useMemo(() => {
@@ -88,12 +92,31 @@ export function ConstellationWindow(): React.ReactElement | null {
         return result
     }, [rawData, totalCfo, fs])
 
+    // Apply decimation to corrected data
+    const decimatedStream = useMemo(() => {
+        if (!correctedRaw) return null
+        const decFactor = Math.max(1, Math.floor(decimateFactor))
+        if (decFactor === 1) return correctedRaw
+
+        const numSamples = Math.floor(correctedRaw.length / 2)
+        const result = new Float32Array(Math.ceil(numSamples / decFactor) * 2)
+        let outIdx = 0
+        for (let i = 0; i < numSamples; i += decFactor) {
+            result[outIdx * 2] = correctedRaw[i * 2]
+            result[outIdx * 2 + 1] = correctedRaw[i * 2 + 1]
+            outIdx++
+        }
+        return result
+    }, [correctedRaw, decimateFactor])
+
     // OFDM Analysis Logic
     const ofdmAnalysis = useMemo(() => {
-        if (!correctedRaw || analysisMode !== 'ofdm') return null
+        if (!decimatedStream || analysisMode !== 'ofdm') return null
 
         const n = ofdmFftSize
-        const numBlocks = Math.floor(correctedRaw.length / 2 / n)
+        const numBlocks = Math.floor(decimatedStream.length / 2 / n)
+        if (numBlocks === 0) return null
+
         const avgSpectrum = new Float32Array(n)
 
         // Prepare FFT buffers
@@ -102,22 +125,24 @@ export function ConstellationWindow(): React.ReactElement | null {
 
         const extractedPoints = new Float32Array(numBlocks * 2)
 
-        // Loop over blocks to compute average spectrum and extract bin
-        for (let b = 0; b < numBlocks; b++) {
+        // Use a simpler DFT or FFT for accumulation
+        // To keep it responsive, if numBlocks is large, we might limit it
+        const maxBlocks = 512
+        const actualBlocks = Math.min(numBlocks, maxBlocks)
+
+        for (let b = 0; b < actualBlocks; b++) {
             for (let i = 0; i < n; i++) {
-                re[i] = correctedRaw[(b * n + i) * 2]
-                im[i] = correctedRaw[(b * n + i) * 2 + 1]
+                re[i] = decimatedStream[(b * n + i) * 2]
+                im[i] = decimatedStream[(b * n + i) * 2 + 1]
             }
 
             tsfft(re, im)
 
-            // Accumulate spectrum
             for (let i = 0; i < n; i++) {
                 const magSq = re[i] * re[i] + im[i] * im[i]
                 avgSpectrum[i] += magSq
             }
 
-            // If we already know the bin, extract it
             if (!autoPick) {
                 const shiftedBin = (selectedBin + n) % n
                 extractedPoints[b * 2] = re[shiftedBin] / n
@@ -125,39 +150,32 @@ export function ConstellationWindow(): React.ReactElement | null {
             }
         }
 
-        // Finalize spectrum (dB)
         for (let i = 0; i < n; i++) {
-            avgSpectrum[i] = 10 * Math.log10(avgSpectrum[i] / numBlocks + 1e-12)
+            avgSpectrum[i] = 10 * Math.log10(avgSpectrum[i] / actualBlocks + 1e-12)
         }
 
-        // Shift spectrum for display (DC center)
         const displaySpectrum = new Float32Array(n)
         for (let i = 0; i < n; i++) {
             displaySpectrum[i] = avgSpectrum[(i + n / 2) % n]
         }
 
-        // Auto-pick biggest bin (ignoring DC if possible, but let's just pick max for now)
         let actualBin = selectedBin
         if (autoPick) {
             let maxVal = -Infinity
             let maxIdx = 0
             for (let i = 0; i < n; i++) {
-                // Ignore some bins at the edges/DC to avoid artifacts if needed
                 if (avgSpectrum[i] > maxVal) {
-                    maxVal = avgSpectrum[i]
-                    maxIdx = i
+                    maxVal = avgSpectrum[i]; maxIdx = i
                 }
             }
             actualBin = maxIdx
-            // Re-extract since we didn't do it in the first pass
-            for (let b = 0; b < numBlocks; b++) {
-                // We'd need to re-run the FFT or store results. 
-                // To keep it simple, let's just do a second pass ONLY for the selected bin extraction
+            // Re-extract since we didn't do it
+            for (let b = 0; b < actualBlocks; b++) {
                 let reBin = 0, imBin = 0;
                 const angleScale = -2 * Math.PI * actualBin / n;
                 for (let i = 0; i < n; i++) {
-                    const r = correctedRaw[(b * n + i) * 2]
-                    const c = correctedRaw[(b * n + i) * 2 + 1]
+                    const r = decimatedStream[(b * n + i) * 2]
+                    const c = decimatedStream[(b * n + i) * 2 + 1]
                     const ang = i * angleScale;
                     const cosW = Math.cos(ang), sinW = Math.sin(ang);
                     reBin += r * cosW - c * sinW;
@@ -169,26 +187,16 @@ export function ConstellationWindow(): React.ReactElement | null {
         }
 
         return { spectrum: displaySpectrum, points: extractedPoints, lockedBin: actualBin }
-    }, [correctedRaw, analysisMode, ofdmFftSize, selectedBin, autoPick])
+    }, [decimatedStream, analysisMode, ofdmFftSize, selectedBin, autoPick])
 
     // Final processed data for plotting
     const processedData = useMemo(() => {
         if (analysisMode === 'time') {
-            if (!correctedRaw) return null
-            const decFactor = Math.max(1, Math.floor(decimateFactor))
-            const numSamples = Math.floor(correctedRaw.length / 2)
-            const result = new Float32Array(Math.ceil(numSamples / decFactor) * 2)
-            let outIdx = 0
-            for (let i = 0; i < numSamples; i += decFactor) {
-                result[outIdx * 2] = correctedRaw[i * 2]
-                result[outIdx * 2 + 1] = correctedRaw[i * 2 + 1]
-                outIdx++
-            }
-            return result
+            return decimatedStream
         } else {
             return ofdmAnalysis?.points || null
         }
-    }, [correctedRaw, analysisMode, decimateFactor, ofdmAnalysis])
+    }, [decimatedStream, analysisMode, ofdmAnalysis])
 
     const drawPlot = useCallback(() => {
         if (!canvasRef.current || !processedData) return
@@ -259,7 +267,6 @@ export function ConstellationWindow(): React.ReactElement | null {
             if (spectrum[i] < min) min = spectrum[i]
             if (spectrum[i] > max) max = spectrum[i]
         }
-        // Normalize for view
         const range = Math.max(20, max - min)
         const floor = max - range
 
@@ -274,7 +281,6 @@ export function ConstellationWindow(): React.ReactElement | null {
         }
         ctx.stroke()
 
-        // Highlight selected bin
         const binIdx = (ofdmAnalysis.lockedBin + n / 2) % n
         const binX = binIdx * canvas.width / n
         ctx.strokeStyle = '#ff922b'
@@ -304,7 +310,7 @@ export function ConstellationWindow(): React.ReactElement | null {
                 </div>
                 {cursorRange && (
                     <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                        Selection: {(cursorRange.length / fs).toExponential(2)}s | Rates: {(fs / 1e6).toFixed(2)} MHz
+                        Selection: {(cursorRange.length / fs).toExponential(2)}s | Target: {(fs / decimateFactor / 1e6).toFixed(2)} MHz
                     </span>
                 )}
             </div>
@@ -315,6 +321,7 @@ export function ConstellationWindow(): React.ReactElement | null {
                 </div>
 
                 <div style={sidebarStyle}>
+                    {/* CFO Section */}
                     <div style={sidebarSectionStyle}>
                         <label style={labelStyle}>Coarse CFO (Hz)</label>
                         <input
@@ -380,22 +387,33 @@ export function ConstellationWindow(): React.ReactElement | null {
 
                     <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '8px 0' }} />
 
-                    {analysisMode === 'time' ? (
-                        <div style={sidebarSectionStyle}>
-                            <label style={labelStyle}>Decimation</label>
-                            <div style={modeToggleStyle}>
-                                <button onClick={() => setDecimateMode('factor')} style={decimateMode === 'factor' ? activeModeStyle : inactiveModeStyle}>Factor</button>
-                                <button onClick={() => setDecimateMode('rate')} style={decimateMode === 'rate' ? activeModeStyle : inactiveModeStyle}>Rate</button>
-                            </div>
-                            {decimateMode === 'factor' ? (
-                                <select value={decimateFactor} onChange={(e) => setDecimateFactor(Number(e.target.value))} style={inputStyle}>
-                                    {[1, 2, 4, 8, 16, 32, 64, 128].map(opt => <option key={opt} value={opt}>{opt}x</option>)}
-                                </select>
-                            ) : (
-                                <input type="text" value={targetRateInput} onChange={(e) => setTargetRateInput(e.target.value)} style={inputStyle} placeholder="3.84e6" />
-                            )}
+                    {/* Decimation Section (Now always visible) */}
+                    <div style={sidebarSectionStyle}>
+                        <label style={labelStyle}>Decimation</label>
+                        <div style={modeToggleStyle}>
+                            <button onClick={() => setDecimateMode('factor')} style={decimateMode === 'factor' ? activeModeStyle : inactiveModeStyle}>Factor</button>
+                            <button onClick={() => setDecimateMode('rate')} style={decimateMode === 'rate' ? activeModeStyle : inactiveModeStyle}>Rate</button>
+                            <button onClick={() => setDecimateMode('selection')} style={decimateMode === 'selection' ? activeModeStyle : inactiveModeStyle}>Symbol</button>
                         </div>
-                    ) : (
+                        {decimateMode === 'factor' && (
+                            <select value={decimateFactor} onChange={(e) => setDecimateFactor(Number(e.target.value))} style={inputStyle}>
+                                {[1, 2, 4, 8, 16, 32, 64, 128].map(opt => <option key={opt} value={opt}>{opt}x</option>)}
+                            </select>
+                        )}
+                        {decimateMode === 'rate' && (
+                            <input type="text" value={targetRateInput} onChange={(e) => setTargetRateInput(e.target.value)} style={inputStyle} placeholder="3.84e6" />
+                        )}
+                        {decimateMode === 'selection' && (
+                            <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', background: 'var(--bg3)', padding: 6, borderRadius: 4 }}>
+                                Match selection to Nfft
+                            </div>
+                        )}
+                        <div style={{ fontSize: 10, color: 'var(--text-dim)', textAlign: 'right', marginTop: 2 }}>
+                            Factor: {decimateFactor}x
+                        </div>
+                    </div>
+
+                    {analysisMode === 'ofdm' && (
                         <div style={sidebarSectionStyle}>
                             <label style={labelStyle}>OFDM Parameters</label>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -445,7 +463,6 @@ export function ConstellationWindow(): React.ReactElement | null {
     )
 }
 
-// Simple Radix-2 FFT
 function tsfft(re: Float64Array, im: Float64Array) {
     const n = re.length
     for (let i = 1, j = 0; i < n; i++) {
