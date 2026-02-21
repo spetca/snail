@@ -41,9 +41,7 @@ export function FFTWindow(): React.ReactElement | null {
             }).then(setFFTResult).catch(console.error)
         }
     }, [
-        cursorRange?.start,
-        cursorRange?.length,
-        cursorRange?.fs,
+        cursorRange,
         fftSettings.fftSize,
         fftSettings.window,
         fftSettings.shift,
@@ -273,15 +271,10 @@ export function FFTWindow(): React.ReactElement | null {
                 <div style={sidebarStyle}>
                     <div style={sidebarSectionStyle}>
                         <label style={labelStyle}>FFT Bins</label>
-                        <select
-                            value={fftSettings.fftSize}
-                            onChange={e => setFFTSettings({ fftSize: Number(e.target.value) })}
-                            style={selectStyle}
-                        >
-                            {[256, 512, 1024, 2048, 4096, 8192, 16384, 32768].map(s => (
-                                <option key={s} value={s}>{s}</option>
-                            ))}
-                        </select>
+                        <div style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text)', padding: '6px 8px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 4 }}>
+                            {fftResult ? fftResult.data.length : '—'}
+                            <span style={{ color: 'var(--text-muted)', marginLeft: 6, fontSize: 11 }}>auto</span>
+                        </div>
                     </div>
 
                     <div style={sidebarSectionStyle}>

@@ -12,6 +12,8 @@ if (process.platform === 'linux') {
 let mainWindow: BrowserWindow | null = null
 let fftWindow: BrowserWindow | null = null
 let constellationWindow: BrowserWindow | null = null
+let lastFFTData: any = null
+let lastConstellationData: any = null
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -81,6 +83,14 @@ function createFFTWindow(): void {
     fftWindow = null
   })
 
+  fftWindow.webContents.on('did-finish-load', () => {
+    if (lastFFTData && fftWindow) {
+      setTimeout(() => {
+        fftWindow?.webContents.send(IPC.FFT_WINDOW_UPDATE, lastFFTData)
+      }, 200)
+    }
+  })
+
   const fftUrl = is.dev && process.env['ELECTRON_RENDERER_URL']
     ? `${process.env['ELECTRON_RENDERER_URL']}?window=fft`
     : `file://${join(__dirname, '../renderer/index.html')}?window=fft`
@@ -120,6 +130,14 @@ function createConstellationWindow(): void {
     constellationWindow = null
   })
 
+  constellationWindow.webContents.on('did-finish-load', () => {
+    if (lastConstellationData && constellationWindow) {
+      setTimeout(() => {
+        constellationWindow?.webContents.send(IPC.CONSTELLATION_WINDOW_UPDATE, lastConstellationData)
+      }, 200)
+    }
+  })
+
   const constUrl = is.dev && process.env['ELECTRON_RENDERER_URL']
     ? `${process.env['ELECTRON_RENDERER_URL']}?window=constellation`
     : `file://${join(__dirname, '../renderer/index.html')}?window=constellation`
@@ -140,6 +158,7 @@ app.whenReady().then(() => {
   })
 
   ipcMain.on(IPC.FFT_WINDOW_UPDATE, (_event: any, data: any) => {
+    lastFFTData = data
     if (fftWindow) {
       fftWindow.webContents.send(IPC.FFT_WINDOW_UPDATE, data)
     }
@@ -150,6 +169,7 @@ app.whenReady().then(() => {
   })
 
   ipcMain.on(IPC.CONSTELLATION_WINDOW_UPDATE, (_event: any, data: any) => {
+    lastConstellationData = data
     if (constellationWindow) {
       constellationWindow.webContents.send(IPC.CONSTELLATION_WINDOW_UPDATE, data)
     }

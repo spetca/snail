@@ -17,13 +17,12 @@ import { ConstellationWindow } from './components/ConstellationWindow'
 
 export default function App(): React.ReactElement {
   const windowParam = new URLSearchParams(window.location.search).get('window')
-  if (windowParam === 'fft') {
-    return <FFTWindow />
-  }
-  if (windowParam === 'constellation') {
-    return <ConstellationWindow />
-  }
+  if (windowParam === 'fft') return <FFTWindow />
+  if (windowParam === 'constellation') return <ConstellationWindow />
+  return <MainApp />
+}
 
+function MainApp(): React.ReactElement {
   const fileInfo = useStore((s) => s.fileInfo)
   const setFileInfo = useStore((s) => s.setFileInfo)
   const setLoading = useStore((s) => s.setLoading)

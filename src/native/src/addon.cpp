@@ -321,22 +321,38 @@ public:
         logScale_(logScale) {}
 
     void Execute() override {
-        // Ensure fftSize is reasonable
-        if (fftSize_ <= 0 || fftSize_ > 1024 * 1024) {
-            SetError("Invalid FFT size");
+        size_t totalSamples = g_source.totalSamples();
+        if (totalSamples == 0 || startSample_ >= totalSamples) {
+            result_.assign(4, logScale_ ? -120.0f : 0.0f);
             return;
         }
 
-        // Read samples - if we want to average multiple windows, we'd do it here.
-        // For now, we take one FFT of size 'fftSize_' starting at 'startSample_'.
-        // If we want to cover the whole 'length_', we should probably zero-pad or average.
-        // The most common behavior for a single-window FFT is to take the first N samples.
-        std::vector<std::complex<float>> signal(fftSize_);
-        g_source.getSamples(startSample_, fftSize_, signal.data());
+        // FFT size = next power of 2 >= selection length.
+        // Falls back to the configured fftSize_ when no selection is provided.
+        size_t selLen = (length_ > 0) ? length_ : static_cast<size_t>(fftSize_);
+        selLen = std::min(selLen, totalSamples - startSample_);
+        if (selLen < 4) selLen = 4;
 
-        result_.resize(fftSize_);
-        FFTEngine engine(fftSize_);
-        engine.computeFFT(signal.data(), fftSize_, result_.data(), shift_, logScale_, window_);
+        // Cap at 2^20 (~1M) to avoid OOM on huge selections
+        const size_t MAX_FFT = 1u << 20;
+        int actualFFTSize = 4;
+        while (static_cast<size_t>(actualFFTSize) < selLen && static_cast<size_t>(actualFFTSize) < MAX_FFT) {
+            actualFFTSize <<= 1;
+        }
+
+        if (actualFFTSize <= 0 || actualFFTSize > static_cast<int>(MAX_FFT)) {
+            SetError("FFT size out of range");
+            return;
+        }
+
+        // Read exactly the selected samples; zero-pad remainder up to actualFFTSize
+        std::vector<std::complex<float>> signal(actualFFTSize, {0.0f, 0.0f});
+        size_t readLen = std::min(selLen, totalSamples - startSample_);
+        g_source.getSamples(startSample_, readLen, signal.data());
+
+        result_.resize(actualFFTSize);
+        FFTEngine engine(actualFFTSize);
+        engine.computeFFT(signal.data(), actualFFTSize, result_.data(), shift_, logScale_, window_);
     }
 
     void OnOK() override {
