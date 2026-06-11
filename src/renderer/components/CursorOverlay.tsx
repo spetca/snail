@@ -22,6 +22,7 @@ export function CursorOverlay(): React.ReactElement {
   const cursors = useStore((s) => s.cursors)
   const annotations = useStore((s) => s.annotations)
   const annotationsVisible = useStore((s) => s.annotationsVisible)
+  const classificationResults = useStore((s) => s.classificationResults)
   const sampleRate = useStore((s) => s.sampleRate)
   const fftSize = useStore((s) => s.fftSize)
   const zoomLevel = useStore((s) => s.zoomLevel)
@@ -39,6 +40,8 @@ export function CursorOverlay(): React.ReactElement {
   const setSelectedAnnotationIndex = useStore((s) => s.setSelectedAnnotationIndex)
   const setPendingExport = useStore((s) => s.setPendingExport)
   const setShowExportDialog = useStore((s) => s.setShowExportDialog)
+  const playheadSample = useStore((s) => s.playheadSample)
+  const isPlaying = useStore((s) => s.isPlaying)
 
   // Draw cursors
   useEffect(() => {
@@ -123,6 +126,42 @@ export function CursorOverlay(): React.ReactElement {
         ctx.fillStyle = color
         ctx.fillText(ann.label, lx + labelPadX, ly + labelH - labelPadY)
       }
+    }
+
+    // Draw classification result bands (dashed border, label + confidence)
+    for (let i = 0; i < classificationResults.length; ++i) {
+      const cr = classificationResults[i]
+      const color = ANNOTATION_COLORS[i % ANNOTATION_COLORS.length]
+
+      const bx1 = (cr.sampleStart - scrollOffset) / samplesPerPx
+      const bx2 = (cr.sampleStart + cr.sampleCount - scrollOffset) / samplesPerPx
+
+      const drawX1 = Math.max(0, bx1)
+      const drawX2 = Math.min(rect.width, bx2)
+      if (drawX2 <= drawX1) continue
+
+      // Semi-transparent fill, slightly more transparent than annotations
+      const alpha = Math.round(cr.confidence * 0x44).toString(16).padStart(2, '0')
+      ctx.fillStyle = color + alpha
+      ctx.fillRect(drawX1, 0, drawX2 - drawX1, rect.height)
+
+      // Dashed border (distinguishes from solid annotation border)
+      ctx.strokeStyle = color + 'BB'
+      ctx.lineWidth = 1
+      ctx.setLineDash([4, 3])
+      ctx.strokeRect(drawX1, 0, drawX2 - drawX1, rect.height)
+      ctx.setLineDash([])
+
+      // Label + confidence at top-left
+      const labelText = `${cr.label} ${Math.round(cr.confidence * 100)}%`
+      ctx.font = '9px "JetBrains Mono", monospace'
+      const tw = ctx.measureText(labelText).width
+      const lx = drawX1 + 1
+      const ly = 2
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'
+      ctx.fillRect(lx, ly, tw + 6, 13)
+      ctx.fillStyle = color
+      ctx.fillText(labelText, lx + 3, ly + 10)
     }
 
     if (cursors.enabled) {
@@ -210,7 +249,26 @@ export function CursorOverlay(): React.ReactElement {
         ctx.fillText(label, rect.width - TRI_H - tw - 9, y + 4)
       }
     } // end if (cursors.enabled)
-  }, [cursors, annotations, annotationsVisible, fftSize, zoomLevel, sampleRate, scrollOffset, xAxisMode, yZoomLevel, yScrollOffset, hoverTarget, selectedAnnotationIndex])
+
+    // Playhead line
+    if (isPlaying) {
+      const stride = Math.max(1, Math.round(fftSize / zoomLevel))
+      const px = (playheadSample - scrollOffset) / stride
+      if (px >= 0 && px <= rect.width) {
+        ctx.save()
+        ctx.strokeStyle = '#00e5ff'
+        ctx.lineWidth = 1.5
+        ctx.shadowColor = '#00e5ff'
+        ctx.shadowBlur = 4
+        ctx.setLineDash([])
+        ctx.beginPath()
+        ctx.moveTo(px, 0)
+        ctx.lineTo(px, rect.height)
+        ctx.stroke()
+        ctx.restore()
+      }
+    }
+  }, [cursors, annotations, annotationsVisible, classificationResults, fftSize, zoomLevel, sampleRate, scrollOffset, xAxisMode, yZoomLevel, yScrollOffset, hoverTarget, selectedAnnotationIndex, playheadSample, isPlaying])
 
   const hitTestTriangle = useCallback((mx: number, my: number): DragTarget => {
     const container = containerRef.current
@@ -393,7 +451,7 @@ export function CursorOverlay(): React.ReactElement {
     setHoverTarget(null)
   }, [])
 
-  if (!cursors.enabled && annotations.length === 0) return <></>
+  if (!cursors.enabled && annotations.length === 0 && classificationResults.length === 0 && !isPlaying) return <></>
 
   const selectedAnn = selectedAnnotationIndex !== null ? annotations[selectedAnnotationIndex] : null
 

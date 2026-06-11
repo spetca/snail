@@ -5,9 +5,15 @@
 #include "filter_engine.h"
 #include "correlation_engine.h"
 #include "sigmf_writer.h"
+#include "feature_extractor.h"
+#include "classifier.h"
+#include "pulse_finder.h"
 
 // Global input source (single file at a time)
 static InputSource g_source;
+
+// Global classifier (shared across calls)
+static Classifier g_classifier;
 
 // ── openFile(path, format?) -> FileInfo ──────────────────────────
 
@@ -20,8 +26,17 @@ Napi::Value OpenFile(const Napi::CallbackInfo& info) {
         format = info[1].As<Napi::String>().Utf8Value();
     }
 
+    size_t viewStart = 0, viewLength = 0;
+    if (info.Length() > 2 && info[2].IsObject()) {
+        auto opts = info[2].As<Napi::Object>();
+        if (opts.Has("viewStart") && opts.Get("viewStart").IsNumber())
+            viewStart = static_cast<size_t>(opts.Get("viewStart").As<Napi::Number>().DoubleValue());
+        if (opts.Has("viewLength") && opts.Get("viewLength").IsNumber())
+            viewLength = static_cast<size_t>(opts.Get("viewLength").As<Napi::Number>().DoubleValue());
+    }
+
     try {
-        g_source.open(path, format);
+        g_source.open(path, format, viewStart, viewLength);
     } catch (const std::exception& e) {
         Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
         return env.Undefined();
@@ -33,6 +48,7 @@ Napi::Value OpenFile(const Napi::CallbackInfo& info) {
     result.Set("sampleRate", Napi::Number::New(env, g_source.sampleRate()));
     result.Set("totalSamples", Napi::Number::New(env, static_cast<double>(g_source.totalSamples())));
     result.Set("fileSize", Napi::Number::New(env, static_cast<double>(g_source.fileSize())));
+    result.Set("fileTotal", Napi::Number::New(env, static_cast<double>(g_source.fullFileSamples())));
 
     if (g_source.centerFrequency() != 0) {
         result.Set("centerFrequency", Napi::Number::New(env, g_source.centerFrequency()));
@@ -447,6 +463,231 @@ Napi::Value ReadFileSamples(const Napi::CallbackInfo& info) {
     return result;
 }
 
+// ── extractFeatures({ startSample, sampleCount, frameSize }) → { features: Float32Array, frameCount } ──
+
+Napi::Value ExtractFeatures(const Napi::CallbackInfo& info) {
+    auto env = info.Env();
+    auto config = info[0].As<Napi::Object>();
+
+    size_t startSample = static_cast<size_t>(config.Get("startSample").As<Napi::Number>().DoubleValue());
+    size_t sampleCount = static_cast<size_t>(config.Get("sampleCount").As<Napi::Number>().DoubleValue());
+    int frameSize = 256;
+    if (config.Has("frameSize") && config.Get("frameSize").IsNumber())
+        frameSize = config.Get("frameSize").As<Napi::Number>().Int32Value();
+    if (frameSize < 4) frameSize = 256;
+
+    auto result = Napi::Object::New(env);
+    try {
+        // Clamp to file bounds
+        size_t total = g_source.totalSamples();
+        if (startSample >= total) {
+            result.Set("features", Napi::Float32Array::New(env, 0));
+            result.Set("frameCount", Napi::Number::New(env, 0));
+            return result;
+        }
+        if (startSample + sampleCount > total)
+            sampleCount = total - startSample;
+
+        size_t frameCount = sampleCount / static_cast<size_t>(frameSize);
+        if (frameCount == 0) {
+            result.Set("features", Napi::Float32Array::New(env, 0));
+            result.Set("frameCount", Napi::Number::New(env, 0));
+            return result;
+        }
+
+        FeatureExtractor extractor(frameSize);
+        std::vector<float> featureMat(frameCount * NUM_FEATURES);
+
+        std::vector<cf32> frame(frameSize);
+        for (size_t fi = 0; fi < frameCount; ++fi) {
+            size_t offset = startSample + fi * static_cast<size_t>(frameSize);
+            g_source.getSamples(offset, static_cast<size_t>(frameSize), frame.data());
+            auto feat = extractor.extract(frame.data(), static_cast<size_t>(frameSize));
+            for (int k = 0; k < NUM_FEATURES; ++k)
+                featureMat[fi * NUM_FEATURES + k] = feat[k];
+        }
+
+        auto arr = Napi::Float32Array::New(env, featureMat.size());
+        std::memcpy(arr.Data(), featureMat.data(), featureMat.size() * sizeof(float));
+        result.Set("features", arr);
+        result.Set("frameCount", Napi::Number::New(env, static_cast<double>(frameCount)));
+    } catch (const std::exception& e) {
+        Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+    return result;
+}
+
+// ── loadClassifier(modelPath) → { success, labels?, error? } ─────────────────
+
+Napi::Value LoadClassifier(const Napi::CallbackInfo& info) {
+    auto env = info.Env();
+    std::string modelPath = info[0].As<Napi::String>().Utf8Value();
+
+    auto result = Napi::Object::New(env);
+    std::string err;
+    bool ok = g_classifier.load(modelPath, err);
+    result.Set("success", Napi::Boolean::New(env, ok));
+    if (!ok) {
+        result.Set("error", Napi::String::New(env, err));
+    } else {
+        auto labelsArr = Napi::Array::New(env, g_classifier.labels().size());
+        for (size_t i = 0; i < g_classifier.labels().size(); ++i)
+            labelsArr.Set(static_cast<uint32_t>(i), Napi::String::New(env, g_classifier.labels()[i]));
+        result.Set("labels", labelsArr);
+    }
+    return result;
+}
+
+// ── classifyRegion({ startSample, sampleCount, frameSize }) → Array<ClassifyFrame> ──
+
+Napi::Value ClassifyRegion(const Napi::CallbackInfo& info) {
+    auto env = info.Env();
+    auto config = info[0].As<Napi::Object>();
+
+    size_t startSample = static_cast<size_t>(config.Get("startSample").As<Napi::Number>().DoubleValue());
+    size_t sampleCount = static_cast<size_t>(config.Get("sampleCount").As<Napi::Number>().DoubleValue());
+    int frameSize = 256;
+    if (config.Has("frameSize") && config.Get("frameSize").IsNumber())
+        frameSize = config.Get("frameSize").As<Napi::Number>().Int32Value();
+    if (frameSize < 4) frameSize = 256;
+
+    if (!g_classifier.loaded()) {
+        Napi::Error::New(env, "No classifier loaded").ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+
+    auto arr = Napi::Array::New(env);
+    try {
+        size_t total = g_source.totalSamples();
+        if (startSample >= total)
+            return arr;
+        if (startSample + sampleCount > total)
+            sampleCount = total - startSample;
+
+        size_t frameCount = sampleCount / static_cast<size_t>(frameSize);
+        if (frameCount == 0) return arr;
+
+        FeatureExtractor extractor(frameSize);
+        std::vector<cf32> frame(frameSize);
+        uint32_t resultIdx = 0;
+
+        for (size_t fi = 0; fi < frameCount; ++fi) {
+            size_t offset = startSample + fi * static_cast<size_t>(frameSize);
+            g_source.getSamples(offset, static_cast<size_t>(frameSize), frame.data());
+            auto feat = extractor.extract(frame.data(), static_cast<size_t>(frameSize));
+
+            float conf = 0.0f;
+            int labelIdx = g_classifier.classify(feat, conf);
+            std::string label = g_classifier.labelFor(labelIdx);
+
+            auto obj = Napi::Object::New(env);
+            obj.Set("sampleStart", Napi::Number::New(env, static_cast<double>(offset)));
+            obj.Set("sampleCount", Napi::Number::New(env, static_cast<double>(frameSize)));
+            obj.Set("label", Napi::String::New(env, label));
+            obj.Set("confidence", Napi::Number::New(env, static_cast<double>(conf)));
+            arr.Set(resultIdx++, obj);
+        }
+    } catch (const std::exception& e) {
+        Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+    return arr;
+}
+
+// ── findPulses(config) -> Promise<PulseRecord[]> ─────────────────────────────
+
+class PulseFinderWorker : public Napi::AsyncWorker {
+public:
+    PulseFinderWorker(Napi::Env env, Napi::Promise::Deferred deferred, PulseFindConfig cfg)
+        : Napi::AsyncWorker(env), deferred_(deferred), cfg_(std::move(cfg)) {}
+
+    void Execute() override {
+        try {
+            size_t total = g_source.totalSamples();
+            if (total == 0) return;
+
+            size_t start = cfg_.startSample;
+            size_t end   = (cfg_.endSample > 0 && cfg_.endSample <= total) ? cfg_.endSample : total;
+            if (start >= end) return;
+
+            // Cap at 50M samples (~400 MB) to avoid OOM
+            const size_t MAX_SAMPLES = 50000000;
+            size_t count = std::min(end - start, MAX_SAMPLES);
+
+            samples_.resize(count);
+            g_source.getSamples(start, count, samples_.data());
+
+            PulseFindConfig localCfg = cfg_;
+            localCfg.startSample = 0;
+            localCfg.endSample   = count;
+
+            PulseFinder finder;
+            records_ = finder.find(samples_.data(), count, localCfg);
+
+            // Offset sample indices back to file-absolute
+            for (auto& r : records_) {
+                r.startSample += start;
+                r.endSample   += start;
+            }
+        } catch (const std::bad_alloc&) {
+            SetError("Out of memory: search region is too large. Use Current View or Cursor selection.");
+        } catch (const std::exception& e) {
+            SetError(std::string("Pulse search failed: ") + e.what());
+        } catch (...) {
+            SetError("Pulse search failed: unknown error");
+        }
+    }
+
+    void OnOK() override {
+        auto env = Env();
+        auto arr = Napi::Array::New(env, records_.size());
+        for (size_t i = 0; i < records_.size(); i++) {
+            const auto& r = records_[i];
+            auto obj = Napi::Object::New(env);
+            obj.Set("pulseNumber",         Napi::Number::New(env, static_cast<double>(r.pulseNumber)));
+            obj.Set("startSample",         Napi::Number::New(env, static_cast<double>(r.startSample)));
+            obj.Set("endSample",           Napi::Number::New(env, static_cast<double>(r.endSample)));
+            obj.Set("startTimeSecs",       Napi::Number::New(env, r.startTimeSecs));
+            obj.Set("endTimeSecs",         Napi::Number::New(env, r.endTimeSecs));
+            obj.Set("measuredWidthSecs",   Napi::Number::New(env, r.measuredWidthSecs));
+            obj.Set("centerFrequencyHz",   Napi::Number::New(env, r.centerFrequencyHz));
+            obj.Set("occupiedBandwidthHz", Napi::Number::New(env, r.occupiedBandwidthHz));
+            obj.Set("priSecs",             Napi::Number::New(env, r.priSecs));
+            arr.Set(static_cast<uint32_t>(i), obj);
+        }
+        deferred_.Resolve(arr);
+    }
+
+    void OnError(const Napi::Error& err) override { deferred_.Reject(err.Value()); }
+
+private:
+    Napi::Promise::Deferred deferred_;
+    PulseFindConfig cfg_;
+    std::vector<std::complex<float>> samples_;
+    std::vector<PulseRecord> records_;
+};
+
+Napi::Value FindPulses(const Napi::CallbackInfo& info) {
+    auto env = info.Env();
+    auto cfg_js = info[0].As<Napi::Object>();
+
+    PulseFindConfig cfg;
+    cfg.targetWidthSecs = cfg_js.Get("targetWidthSecs").As<Napi::Number>().DoubleValue();
+    cfg.widthTolSecs    = cfg_js.Get("widthTolSecs").As<Napi::Number>().DoubleValue();
+    cfg.targetOBWHz     = cfg_js.Get("targetOBWHz").As<Napi::Number>().DoubleValue();
+    cfg.obwTolHz        = cfg_js.Get("obwTolHz").As<Napi::Number>().DoubleValue();
+    cfg.sampleRate      = cfg_js.Get("sampleRate").As<Napi::Number>().DoubleValue();
+    cfg.startSample     = cfg_js.Has("startSample") ? static_cast<size_t>(cfg_js.Get("startSample").As<Napi::Number>().DoubleValue()) : 0;
+    cfg.endSample       = cfg_js.Has("endSample")   ? static_cast<size_t>(cfg_js.Get("endSample").As<Napi::Number>().DoubleValue())   : 0;
+    cfg.thresholdDb     = cfg_js.Has("thresholdDb") ? cfg_js.Get("thresholdDb").As<Napi::Number>().DoubleValue() : -1.0;
+    cfg.obwPercentile   = cfg_js.Has("obwPercentile") ? cfg_js.Get("obwPercentile").As<Napi::Number>().DoubleValue() : 0.99;
+
+    auto deferred = Napi::Promise::Deferred::New(env);
+    (new PulseFinderWorker(env, deferred, cfg))->Queue();
+    return deferred.Promise();
+}
+
 // ── Module init ──────────────────────────────────────────────────
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
@@ -457,6 +698,10 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set("correlate", Napi::Function::New(env, Correlate));
     exports.Set("computeFFT", Napi::Function::New(env, ComputeFFT));
     exports.Set("readFileSamples", Napi::Function::New(env, ReadFileSamples));
+    exports.Set("extractFeatures", Napi::Function::New(env, ExtractFeatures));
+    exports.Set("loadClassifier", Napi::Function::New(env, LoadClassifier));
+    exports.Set("classifyRegion", Napi::Function::New(env, ClassifyRegion));
+    exports.Set("findPulses", Napi::Function::New(env, FindPulses));
     return exports;
 }
 

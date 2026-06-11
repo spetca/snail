@@ -33,6 +33,9 @@ add_library(${PROJECT_NAME} SHARED
   src/correlation_engine.cpp
   src/sigmf_parser.cpp
   src/sigmf_writer.cpp
+  src/feature_extractor.cpp
+  src/classifier.cpp
+  src/pulse_finder.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE

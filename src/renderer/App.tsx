@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react'
+import React, { useCallback, useState } from 'react'
 import { useStore } from './state/store'
 import { Toolbar } from './components/Toolbar'
 import { ControlsPanel } from './components/ControlsPanel'
@@ -14,6 +14,12 @@ import { ExportDialog } from './components/ExportDialog'
 import { AnnotationDialog } from './components/AnnotationDialog'
 import { FFTWindow } from './components/FFTWindow'
 import { ConstellationWindow } from './components/ConstellationWindow'
+import { PartialImportDialog } from './components/PartialImportDialog'
+import { FrequencyHopTableBuilder } from './components/FrequencyHopTableBuilder'
+import { PlaybackBar } from './components/PlaybackBar'
+import { RealtimeSpectrum } from './components/RealtimeSpectrum'
+import { usePlayback } from './hooks/usePlayback'
+import type { ProbeResult } from '../shared/sample-formats'
 
 export default function App(): React.ReactElement {
   const windowParam = new URLSearchParams(window.location.search).get('window')
@@ -40,22 +46,53 @@ function MainApp(): React.ReactElement {
   const setShowExport = useStore((s) => s.setShowExportDialog)
   const showAnnotation = useStore((s) => s.showAnnotationDialog)
   const setShowAnnotation = useStore((s) => s.setShowAnnotationDialog)
+  const [showHopTable, setShowHopTable] = useState(false)
 
-  const handleDrop = useCallback(async (e: React.DragEvent) => {
-    e.preventDefault()
-    const file = e.dataTransfer.files[0]
-    if (!file) return
+  usePlayback()
+
+  const [pendingImport, setPendingImport] = useState<{ filePath: string; probe: ProbeResult } | null>(null)
+
+  const openWithProbe = useCallback(async (filePath: string) => {
+    try {
+      const probe = await window.snailAPI.probeFile(filePath)
+      setPendingImport({ filePath, probe })
+    } catch (err: any) {
+      // If probe fails (e.g., file not stat-able), fall back to direct open
+      try {
+        setLoading(true)
+        const info = await window.snailAPI.openFile(filePath)
+        setFileInfo(info)
+      } catch (e: any) {
+        setError(e.message)
+      } finally {
+        setLoading(false)
+      }
+    }
+  }, [setFileInfo, setLoading, setError])
+
+  const handleImportConfirm = useCallback(async (viewStart: number, viewLength: number) => {
+    if (!pendingImport) return
+    const { filePath } = pendingImport
+    setPendingImport(null)
     try {
       setLoading(true)
-      const filePath = window.snailAPI.getPathForFile(file)
-      const info = await window.snailAPI.openFile(filePath)
+      const opts = (viewStart > 0 || viewLength > 0) ? { viewStart, viewLength } : undefined
+      const info = await window.snailAPI.openFile(filePath, undefined, opts)
       setFileInfo(info)
     } catch (err: any) {
       setError(err.message)
     } finally {
       setLoading(false)
     }
-  }, [setFileInfo, setLoading, setError])
+  }, [pendingImport, setFileInfo, setLoading, setError])
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault()
+    const file = e.dataTransfer.files[0]
+    if (!file) return
+    const filePath = window.snailAPI.getPathForFile(file)
+    await openWithProbe(filePath)
+  }, [openWithProbe])
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -78,7 +115,7 @@ function MainApp(): React.ReactElement {
         background: 'var(--bg1)'
       }}
     >
-      <Toolbar onExport={() => setShowExport(true)} onAnnotate={() => setShowAnnotation(true)} />
+      <Toolbar onExport={() => setShowExport(true)} onAnnotate={() => setShowAnnotation(true)} onOpen={openWithProbe} onHopTable={() => setShowHopTable(true)} />
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <ControlsPanel />
@@ -132,6 +169,8 @@ function MainApp(): React.ReactElement {
                 />
               </div>
               <TimeAxis />
+              <PlaybackBar />
+              <RealtimeSpectrum />
               <TracePlot />
               <CorrelationPane />
             </>
@@ -169,6 +208,15 @@ function MainApp(): React.ReactElement {
 
       {showExport && <ExportDialog onClose={() => setShowExport(false)} />}
       {showAnnotation && <AnnotationDialog onClose={() => setShowAnnotation(false)} />}
+      {showHopTable && <FrequencyHopTableBuilder onClose={() => setShowHopTable(false)} />}
+      {pendingImport && (
+        <PartialImportDialog
+          filePath={pendingImport.filePath}
+          probe={pendingImport.probe}
+          onConfirm={handleImportConfirm}
+          onCancel={() => setPendingImport(null)}
+        />
+      )}
     </div>
   )
 }

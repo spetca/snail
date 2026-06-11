@@ -245,6 +245,32 @@ export function SpectrogramView(): React.ReactElement {
     }
   }, [fftSize, yZoomLevel, yScrollOffset, setYZoomLevel, setYScrollOffset])
 
+  // Drag-to-scroll (pan) state
+  const dragRef = useRef<{ startX: number; startOffset: number } | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
+
+  const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    if (!fileInfo) return
+    if (e.button !== 0) return
+    e.currentTarget.setPointerCapture(e.pointerId)
+    dragRef.current = { startX: e.clientX, startOffset: scrollOffset }
+    setIsDragging(true)
+  }, [fileInfo, scrollOffset])
+
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    if (!fileInfo || !dragRef.current) return
+    const dx = e.clientX - dragRef.current.startX
+    const delta = Math.round(-dx * stride)
+    const maxOffset = Math.max(0, fileInfo.totalSamples - viewSize.width * stride)
+    setScrollOffset(Math.max(0, Math.min(maxOffset, dragRef.current.startOffset + delta)))
+  }, [fileInfo, stride, viewSize.width, setScrollOffset])
+
+  const handlePointerUp = useCallback((e: React.PointerEvent) => {
+    e.currentTarget.releasePointerCapture(e.pointerId)
+    dragRef.current = null
+    setIsDragging(false)
+  }, [])
+
   const handleWheel = useCallback((e: React.WheelEvent) => {
     if (!fileInfo) return
     e.preventDefault()
@@ -284,7 +310,14 @@ export function SpectrogramView(): React.ReactElement {
       <canvas
         ref={canvasRef}
         onWheel={handleWheel}
-        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        style={{
+          position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+          cursor: isDragging ? 'grabbing' : 'grab'
+        }}
       />
     </div>
   )

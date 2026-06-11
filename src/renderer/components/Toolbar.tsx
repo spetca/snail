@@ -4,12 +4,12 @@ import { useStore } from '../state/store'
 interface ToolbarProps {
   onExport: () => void
   onAnnotate: () => void
+  onOpen: (filePath: string) => void
+  onHopTable: () => void
 }
 
-export function Toolbar({ onExport, onAnnotate }: ToolbarProps): React.ReactElement {
+export function Toolbar({ onExport, onAnnotate, onOpen, onHopTable }: ToolbarProps): React.ReactElement {
   const fileInfo = useStore((s) => s.fileInfo)
-  const setFileInfo = useStore((s) => s.setFileInfo)
-  const setLoading = useStore((s) => s.setLoading)
   const setError = useStore((s) => s.setError)
   const cursors = useStore((s) => s.cursors)
   const correlationEnabled = useStore((s) => s.correlationEnabled)
@@ -19,13 +19,9 @@ export function Toolbar({ onExport, onAnnotate }: ToolbarProps): React.ReactElem
     try {
       const path = await window.snailAPI.showOpenDialog()
       if (!path) return
-      setLoading(true)
-      const info = await window.snailAPI.openFile(path)
-      setFileInfo(info)
+      onOpen(path)
     } catch (err: any) {
       setError(err.message)
-    } finally {
-      setLoading(false)
     }
   }
 
@@ -74,6 +70,9 @@ export function Toolbar({ onExport, onAnnotate }: ToolbarProps): React.ReactElem
             }}
           >
             Correlate{correlationEnabled ? ' ON' : ''}
+          </button>
+          <button onClick={onHopTable} style={{ WebkitAppRegion: 'no-drag' } as any}>
+            Hop Table
           </button>
         </>
       )}

@@ -28,6 +28,16 @@ export interface FileInfo {
   fileSize: number
   centerFrequency?: number
   sigmfMetaJson?: string
+  /** Total samples in the full file (differs from totalSamples when a view window is active) */
+  fileTotal?: number
+}
+
+export interface ProbeResult {
+  totalSamples: number
+  sampleRate: number
+  format: SampleFormat
+  fileSize: number
+  centerFrequency?: number
 }
 
 export interface FFTTileRequest {
@@ -76,6 +86,37 @@ export interface FFTResult {
   frequencies?: Float32Array
   maxPower: number
   minPower: number
+}
+
+export interface ClassificationResult {
+  sampleStart: number
+  sampleCount: number
+  label: string
+  confidence: number
+}
+
+export interface PulseRecord {
+  pulseNumber: number
+  startSample: number
+  endSample: number
+  startTimeSecs: number
+  endTimeSecs: number
+  measuredWidthSecs: number
+  centerFrequencyHz: number
+  occupiedBandwidthHz: number
+  priSecs: number  // -1 for first pulse
+}
+
+export interface PulseFindRequest {
+  targetWidthSecs: number
+  widthTolSecs: number
+  targetOBWHz: number
+  obwTolHz: number
+  sampleRate: number
+  startSample?: number
+  endSample?: number
+  thresholdDb?: number
+  obwPercentile?: number
 }
 
 export const FORMAT_EXTENSIONS: Record<string, SampleFormat> = {

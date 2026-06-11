@@ -1,9 +1,10 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC } from '../shared/ipc-channels'
-import type { SampleFormat, SigMFAnnotation, FileInfo, FFTTileRequest, ExportConfig, CorrelateRequest, FFTConfigRequest, FFTResult } from '../shared/sample-formats'
+import type { SampleFormat, SigMFAnnotation, FileInfo, FFTTileRequest, ExportConfig, CorrelateRequest, FFTConfigRequest, FFTResult, ClassificationResult, ProbeResult, PulseRecord, PulseFindRequest } from '../shared/sample-formats'
 
 export interface SnailAPI {
-  openFile: (path: string, format?: SampleFormat) => Promise<FileInfo>
+  probeFile: (path: string) => Promise<ProbeResult>
+  openFile: (path: string, format?: SampleFormat, opts?: { viewStart?: number; viewLength?: number }) => Promise<FileInfo>
   getSamples: (start: number, length: number, stride?: number) => Promise<Float32Array>
   computeFFTTile: (req: FFTTileRequest) => Promise<Float32Array>
   exportSigMF: (config: ExportConfig) => Promise<{ success: boolean; error?: string }>
@@ -20,10 +21,18 @@ export interface SnailAPI {
   openConstellationWindow: () => void
   onConstellationUpdate: (callback: (data: any) => void) => () => void
   sendConstellationUpdate: (data: any) => void
+  extractFeatures: (req: { startSample: number; sampleCount: number; frameSize?: number }) => Promise<{ features: Float32Array; frameCount: number }>
+  exportFeatures: (data: { features: Float32Array; labels: string[]; frameSize: number; appendToPath?: string }) => Promise<{ success: boolean; canceled?: boolean; path?: string; appended?: boolean; totalFrames?: number; classBreakdown?: Record<string, number> }>
+  loadClassifier: (modelPath: string) => Promise<{ success: boolean; labels?: string[]; error?: string }>
+  classifyRegion: (req: { startSample: number; sampleCount: number; frameSize?: number }) => Promise<ClassificationResult[]>
+  showOpenJsonDialog: () => Promise<string | null>
+  trainClassifier: (featuresPath: string) => Promise<{ success: boolean; modelPath?: string; error?: string }>
+  findPulses: (req: PulseFindRequest) => Promise<PulseRecord[]>
 }
 
 const api: SnailAPI = {
-  openFile: (path, format) => ipcRenderer.invoke(IPC.OPEN_FILE, path, format),
+  probeFile: (path) => ipcRenderer.invoke(IPC.PROBE_FILE, path),
+  openFile: (path, format, opts) => ipcRenderer.invoke(IPC.OPEN_FILE, path, format, opts),
   getSamples: (start, length, stride) => ipcRenderer.invoke(IPC.GET_SAMPLES, start, length, stride),
   computeFFTTile: (req) => ipcRenderer.invoke(IPC.COMPUTE_FFT_TILE, req),
   exportSigMF: (config) => ipcRenderer.invoke(IPC.EXPORT_SIGMF, config),
@@ -47,7 +56,14 @@ const api: SnailAPI = {
     ipcRenderer.on(IPC.CONSTELLATION_WINDOW_UPDATE, subscription)
     return () => ipcRenderer.removeListener(IPC.CONSTELLATION_WINDOW_UPDATE, subscription)
   },
-  sendConstellationUpdate: (data: any) => ipcRenderer.send(IPC.CONSTELLATION_WINDOW_UPDATE, data)
+  sendConstellationUpdate: (data: any) => ipcRenderer.send(IPC.CONSTELLATION_WINDOW_UPDATE, data),
+  extractFeatures: (req) => ipcRenderer.invoke(IPC.EXTRACT_FEATURES, req),
+  exportFeatures: (data) => ipcRenderer.invoke(IPC.EXPORT_FEATURES, data),
+  loadClassifier: (modelPath) => ipcRenderer.invoke(IPC.LOAD_CLASSIFIER, modelPath),
+  classifyRegion: (req) => ipcRenderer.invoke(IPC.CLASSIFY_REGION, req),
+  showOpenJsonDialog: () => ipcRenderer.invoke(IPC.SHOW_OPEN_JSON_DIALOG),
+  trainClassifier: (featuresPath) => ipcRenderer.invoke(IPC.TRAIN_CLASSIFIER, featuresPath),
+  findPulses: (req) => ipcRenderer.invoke(IPC.FIND_PULSES, req)
 }
 
 contextBridge.exposeInMainWorld('snailAPI', api)

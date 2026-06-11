@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { FileInfo, SigMFAnnotation, SampleFormat, FFTResult } from '../../shared/sample-formats'
+import type { FileInfo, SigMFAnnotation, SampleFormat, FFTResult, ClassificationResult } from '../../shared/sample-formats'
 
 export type XAxisMode = 'samples' | 'time'
 
@@ -55,6 +55,18 @@ export interface AppState {
   tu: number
   cpLen: number
 
+  // Classifier
+  classificationResults: ClassificationResult[]
+  classifierLoaded: boolean
+  classifierLabels: string[]
+
+  // Playback
+  isPlaying: boolean
+  playheadSample: number
+  playbackSpeed: number
+  showRealtimeSpectrum: boolean
+  realtimeSpectrumMode: 'instant' | 'average' | 'max'
+
   // FFT Window
   showFFTWindow: boolean
   fftSettings: {
@@ -106,6 +118,15 @@ export interface AppState {
   setCorrelationLoading: (loading: boolean) => void
   setTu: (tu: number) => void
   setCpLen: (cpLen: number) => void
+  setClassificationResults: (results: ClassificationResult[]) => void
+  setClassifierLoaded: (loaded: boolean) => void
+  setClassifierLabels: (labels: string[]) => void
+  setIsPlaying: (v: boolean) => void
+  setPlayheadSample: (v: number) => void
+  setPlaybackSpeed: (v: number) => void
+  setShowRealtimeSpectrum: (v: boolean) => void
+  setRealtimeSpectrumMode: (v: 'instant' | 'average' | 'max') => void
+
   setShowFFTWindow: (show: boolean) => void
   setFFTSettings: (settings: Partial<AppState['fftSettings']>) => void
   setFFTResult: (result: FFTResult | null) => void
@@ -146,6 +167,14 @@ const initialState = {
   correlationLoading: false,
   tu: 1024,
   cpLen: 256,
+  classificationResults: [] as ClassificationResult[],
+  classifierLoaded: false,
+  classifierLabels: [] as string[],
+  isPlaying: false,
+  playheadSample: 0,
+  playbackSpeed: 1,
+  showRealtimeSpectrum: false,
+  realtimeSpectrumMode: 'instant' as const,
   showFFTWindow: false,
   fftSettings: {
     fftSize: 2048,
@@ -259,6 +288,15 @@ export const useStore = create<AppState>((set, get) => ({
   setCorrelationLoading: (correlationLoading) => set({ correlationLoading }),
   setTu: (tu) => set({ tu, correlationData: null }),
   setCpLen: (cpLen) => set({ cpLen, correlationData: null }),
+  setClassificationResults: (classificationResults) => set({ classificationResults }),
+  setClassifierLoaded: (classifierLoaded) => set({ classifierLoaded }),
+  setClassifierLabels: (classifierLabels) => set({ classifierLabels }),
+  setIsPlaying: (isPlaying) => set({ isPlaying }),
+  setPlayheadSample: (playheadSample) => set({ playheadSample }),
+  setPlaybackSpeed: (playbackSpeed) => set({ playbackSpeed }),
+  setShowRealtimeSpectrum: (showRealtimeSpectrum) => set({ showRealtimeSpectrum }),
+  setRealtimeSpectrumMode: (realtimeSpectrumMode) => set({ realtimeSpectrumMode }),
+
   setShowFFTWindow: (show) => set({ showFFTWindow: show }),
   setFFTSettings: (settings) => set((s) => ({
     fftSettings: { ...s.fftSettings, ...settings }
