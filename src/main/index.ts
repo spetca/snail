@@ -4,9 +4,13 @@ import { is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc-handlers'
 import { IPC } from '../shared/ipc-channels'
 
-// Linux requires disabling the sandbox due to kernel unprivileged userns restrictions
 if (process.platform === 'linux') {
+  // Disable the renderer sandbox — required on kernels with unprivileged user namespaces disabled
   app.commandLine.appendSwitch('no-sandbox')
+  // Prevent GPU process from crashing when /dev/shm is small (VMs, containers, some distros)
+  app.commandLine.appendSwitch('disable-dev-shm-usage')
+  // Keep GPU compositing off to avoid driver-specific crashes on headless / VM setups
+  app.commandLine.appendSwitch('disable-gpu-compositing')
 }
 
 let mainWindow: BrowserWindow | null = null

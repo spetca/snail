@@ -14,12 +14,13 @@ function loadNative(): any {
 
   const isPackaged = app.isPackaged
   const prodPath = path.join(process.resourcesPath, 'native', 'snail_native.node')
-  // In development, the path depends on where the main process is running from
+  // __dirname = out/main/ in both dev and preview; cwd() = project root in dev
   const devPath = path.resolve(__dirname, '../../src/native/build/Release/snail_native.node')
+  const cwdPath = path.resolve(process.cwd(), 'src/native/build/Release/snail_native.node')
 
   const searchPaths = isPackaged
     ? [prodPath]
-    : [devPath, path.join(__dirname, '../native/snail_native.node')]
+    : [devPath, cwdPath, path.join(__dirname, '../native/snail_native.node')]
 
   for (const p of searchPaths) {
     try {
