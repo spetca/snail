@@ -72,7 +72,10 @@ export function SpectrogramView(): React.ReactElement {
     return () => observer.disconnect()
   }, [])
 
-  // Reset on new file: clear old tiles and fit to viewport
+  // Reset on new file: clear old tiles so stale GPU data isn't shown
+  // Do NOT auto-fit zoom/scroll here — store.setFileInfo already sets the
+  // initial position. Auto-fitting the whole file causes random mmap reads
+  // spread across large files (page-fault storm) and visible hangs.
   const fittedFileRef = useRef<string | null>(null)
   const initialLoadRef = useRef(false)
   useEffect(() => {
@@ -83,9 +86,6 @@ export function SpectrogramView(): React.ReactElement {
     initialLoadRef.current = true
     rendererRef.current?.clearTiles()
     generationRef.current++
-    const fillZoom = fftSize * viewSize.width / fileInfo.totalSamples
-    setZoomLevel(Math.min(fftSize, fillZoom))
-    setScrollOffset(0)
   }, [fileInfo, viewSize.width])
 
   // Render spectrogram

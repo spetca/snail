@@ -70,15 +70,17 @@ function MainApp(): React.ReactElement {
     }
   }, [setFileInfo, setLoading, setError])
 
-  const handleImportConfirm = useCallback(async (viewStart: number, viewLength: number) => {
+  const handleImportConfirm = useCallback(async (viewStart: number, _viewLength: number) => {
     if (!pendingImport) return
     const { filePath } = pendingImport
     setPendingImport(null)
     try {
       setLoading(true)
-      const opts = (viewStart > 0 || viewLength > 0) ? { viewStart, viewLength } : undefined
-      const info = await window.snailAPI.openFile(filePath, undefined, opts)
-      setFileInfo(info)
+      // Always open the full file — same as inspectrum's mmap approach.
+      // totalSamples = entire file; the user can scroll anywhere.
+      // Start at zoom=1 (inspectrum default) positioned at the selected start.
+      const info = await window.snailAPI.openFile(filePath)
+      setFileInfo(info, viewStart > 0 ? viewStart : 0)
     } catch (err: any) {
       setError(err.message)
     } finally {

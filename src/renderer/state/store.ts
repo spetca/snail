@@ -86,7 +86,7 @@ export interface AppState {
   }
 
   // Actions
-  setFileInfo: (info: FileInfo | null) => void
+  setFileInfo: (info: FileInfo | null, initialScroll?: number) => void
   setLoading: (loading: boolean) => void
   setError: (error: string | null) => void
   setFFTSize: (size: number) => void
@@ -196,7 +196,7 @@ const initialState = {
 export const useStore = create<AppState>((set, get) => ({
   ...initialState,
 
-  setFileInfo: (info) => {
+  setFileInfo: (info, initialScroll) => {
     let annotations: SigMFAnnotation[] = []
     if (info?.sigmfMetaJson) {
       try {
@@ -219,7 +219,7 @@ export const useStore = create<AppState>((set, get) => ({
       annotations,
       error: null,
       zoomLevel: 1,
-      scrollOffset: 0,
+      scrollOffset: initialScroll ?? 0,
       yZoomLevel: 1,
       yScrollOffset: 0
     })

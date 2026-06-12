@@ -130,8 +130,10 @@ export function PartialImportDialog({ filePath, probe, onConfirm, onCancel }: Pr
             <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>s</span>
           </div>
           <div style={{ color: 'var(--text-muted)', fontSize: 12, paddingLeft: 46 }}>
-            Selection: {selectionSamples.toLocaleString()} samples
-            {' · '}{formatDuration(selectionSamples, sampleRate)}
+            {selectionSamples.toLocaleString()} samples · {formatDuration(selectionSamples, sampleRate)}
+          </div>
+          <div style={{ color: 'var(--text-dim)', fontSize: 11, paddingLeft: 46 }}>
+            Full file loads — view jumps to this range
           </div>
         </div>
 
@@ -156,6 +158,7 @@ export function PartialImportDialog({ filePath, probe, onConfirm, onCancel }: Pr
           </button>
           <button
             onClick={() => onConfirm(viewStart, selectionSamples)}
+            title="Opens the full file, jumps view to this range"
             style={{
               padding: '6px 14px', borderRadius: 5, border: 'none',
               background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 500
