@@ -108,6 +108,7 @@ export function AnnotationDialog({ onClose }: AnnotationDialogProps): React.Reac
         <Field label="Label">
           <input
             type="text"
+            list="signal-types"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             placeholder="Signal label (required)..."
@@ -118,6 +119,19 @@ export function AnnotationDialog({ onClose }: AnnotationDialogProps): React.Reac
               if (e.key === 'Escape') onClose()
             }}
           />
+          <datalist id="signal-types">
+            <option value="lora" />
+            <option value="wifi" />
+            <option value="zigbee" />
+            <option value="bluetooth" />
+            <option value="fm" />
+            <option value="am" />
+            <option value="dect" />
+            <option value="lte" />
+            <option value="gsm" />
+            <option value="aprs" />
+            <option value="ads-b" />
+          </datalist>
         </Field>
 
         <Field label="Comment">
