@@ -23,6 +23,67 @@ function fmtFreq(hz: number): string {
   return `${(hz / 1e6).toFixed(4)} MHz`
 }
 
+// ── Hop frequency clustering ───────────────────────────────────────────────
+
+interface HopChannel {
+  centerHz: number
+  count: number
+  minHz: number
+  maxHz: number
+  spreadHz: number
+}
+
+function clusterHopFrequencies(pulses: PulseRecord[], clusterRadiusHz: number): HopChannel[] {
+  if (pulses.length === 0) return []
+
+  const sorted = [...pulses].sort((a, b) => a.centerFrequencyHz - b.centerFrequencyHz)
+  const clusters: { freqs: number[] }[] = []
+
+  for (const p of sorted) {
+    const f = p.centerFrequencyHz
+    const last = clusters[clusters.length - 1]
+    const clusterCenter = last ? last.freqs.reduce((a, b) => a + b, 0) / last.freqs.length : null
+    if (last && clusterCenter !== null && Math.abs(f - clusterCenter) <= clusterRadiusHz) {
+      last.freqs.push(f)
+    } else {
+      clusters.push({ freqs: [f] })
+    }
+  }
+
+  return clusters
+    .map((c) => {
+      const mean = c.freqs.reduce((a, b) => a + b, 0) / c.freqs.length
+      const min = Math.min(...c.freqs)
+      const max = Math.max(...c.freqs)
+      return { centerHz: mean, count: c.freqs.length, minHz: min, maxHz: max, spreadHz: max - min }
+    })
+    .sort((a, b) => b.count - a.count) // sort by usage descending
+}
+
+function copyHopSet(channels: HopChannel[], cfOffset: number): void {
+  const lines = channels.map((ch, i) =>
+    `${i + 1}\t${((ch.centerHz + cfOffset) / 1e6).toFixed(6)} MHz\t${ch.count}`
+  )
+  navigator.clipboard.writeText(['#\tFrequency\tCount', ...lines].join('\n'))
+}
+
+function exportHopSetCSV(channels: HopChannel[], cfOffset: number): void {
+  const header = 'Rank,Center Freq (MHz),Count,% Usage,Spread (Hz)\n'
+  const total = channels.reduce((s, c) => s + c.count, 0)
+  const rows = channels.map((ch, i) => [
+    i + 1,
+    ((ch.centerHz + cfOffset) / 1e6).toFixed(6),
+    ch.count,
+    ((ch.count / total) * 100).toFixed(1),
+    ch.spreadHz.toFixed(0)
+  ].join(',')).join('\n')
+  const blob = new Blob([header + rows], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = 'hop_set.csv'; a.click()
+  URL.revokeObjectURL(url)
+}
+
 function exportCSV(pulses: PulseRecord[]): void {
   const header = 'Pulse #,Start (s),End (s),Width (µs),Center Freq (MHz),OBW (MHz),PRI (µs)\n'
   const rows = pulses.map((p) => [
@@ -138,6 +199,8 @@ function SingleRow({
 export function FrequencyHopTableBuilder({ onClose }: Props): React.ReactElement {
   const fileInfo = useStore((s) => s.fileInfo)
   const sampleRate = useStore((s) => s.sampleRate)
+  const showAbsoluteFrequency = useStore((s) => s.showAbsoluteFrequency)
+  const cfOffset = showAbsoluteFrequency ? (fileInfo?.centerFrequency ?? 0) : 0
   const cursors = useStore((s) => s.cursors)
   const scrollOffset = useStore((s) => s.scrollOffset)
   const fftSize = useStore((s) => s.fftSize)
@@ -157,7 +220,7 @@ export function FrequencyHopTableBuilder({ onClose }: Props): React.ReactElement
   const [pulses, setPulses] = useState<PulseRecord[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [elapsed, setElapsed] = useState<number | null>(null)
-  const [rightTab, setRightTab] = useState<'table' | 'viz'>('table')
+  const [rightTab, setRightTab] = useState<'table' | 'viz' | 'hopset'>('table')
 
   const getRange = useCallback(() => {
     if (!fileInfo) return {}
@@ -356,26 +419,29 @@ export function FrequencyHopTableBuilder({ onClose }: Props): React.ReactElement
               borderBottom: '1px solid var(--border)',
               background: 'var(--bg3)', flexShrink: 0
             }}>
-              {(['table', 'viz'] as const).map((tab) => (
-                <button
-                  key={tab}
-                  onClick={() => setRightTab(tab)}
-                  disabled={!pulses || pulses.length === 0}
-                  style={{
-                    padding: '8px 16px',
-                    background: 'none',
-                    border: 'none',
-                    borderBottom: rightTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
-                    color: rightTab === tab ? 'var(--text)' : 'var(--text-muted)',
-                    cursor: !pulses || pulses.length === 0 ? 'default' : 'pointer',
-                    fontSize: 12,
-                    fontWeight: rightTab === tab ? 600 : 400,
-                    marginBottom: -1
-                  }}
-                >
-                  {tab === 'table' ? 'Table' : 'Visualize'}
-                </button>
-              ))}
+              {(['table', 'viz', 'hopset'] as const).map((tab) => {
+                const labels = { table: 'Table', viz: 'Visualize', hopset: 'Hop Set' }
+                return (
+                  <button
+                    key={tab}
+                    onClick={() => setRightTab(tab)}
+                    disabled={!pulses || pulses.length === 0}
+                    style={{
+                      padding: '8px 16px',
+                      background: 'none',
+                      border: 'none',
+                      borderBottom: rightTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
+                      color: rightTab === tab ? 'var(--text)' : 'var(--text-muted)',
+                      cursor: !pulses || pulses.length === 0 ? 'default' : 'pointer',
+                      fontSize: 12,
+                      fontWeight: rightTab === tab ? 600 : 400,
+                      marginBottom: -1
+                    }}
+                  >
+                    {labels[tab]}
+                  </button>
+                )
+              })}
               <div style={{ flex: 1 }} />
               <span style={{ color: 'var(--text-dim)', fontSize: 11, paddingRight: 10 }}>
                 {pulses === null ? 'No results yet'
@@ -398,6 +464,101 @@ export function FrequencyHopTableBuilder({ onClose }: Props): React.ReactElement
             {rightTab === 'viz' && pulses && pulses.length > 0 && (
               <HopVisualizer pulses={pulses} sampleRate={sampleRate} />
             )}
+
+            {/* Hop Set tab */}
+            {rightTab === 'hopset' && pulses && pulses.length > 0 && (() => {
+              const clusterRadius = parseFloat(obwTolMHz) * 1e6 || 250e3
+              const channels = clusterHopFrequencies(pulses, clusterRadius)
+              const total = pulses.length
+              return (
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                  {/* Hop set toolbar */}
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '6px 12px', borderBottom: '1px solid var(--border)',
+                    background: 'var(--bg3)', flexShrink: 0, fontSize: 12
+                  }}>
+                    <span style={{ color: 'var(--text-muted)' }}>
+                      {channels.length} unique frequenc{channels.length !== 1 ? 'ies' : 'y'}
+                      {' · '}cluster radius {fmtFreq(clusterRadius)}
+                    </span>
+                    <div style={{ flex: 1 }} />
+                    <button
+                      onClick={() => copyHopSet(channels, cfOffset)}
+                      style={{
+                        background: 'var(--bg2)', border: '1px solid var(--border)',
+                        color: 'var(--text)', borderRadius: 4, padding: '3px 10px',
+                        cursor: 'pointer', fontSize: 11
+                      }}
+                    >Copy</button>
+                    <button
+                      onClick={() => exportHopSetCSV(channels, cfOffset)}
+                      style={{
+                        background: 'var(--bg2)', border: '1px solid var(--border)',
+                        color: 'var(--text)', borderRadius: 4, padding: '3px 10px',
+                        cursor: 'pointer', fontSize: 11
+                      }}
+                    >Export CSV</button>
+                  </div>
+
+                  {/* Hop set table */}
+                  <div style={{ flex: 1, overflow: 'auto' }}>
+                    <table style={{
+                      width: '100%', borderCollapse: 'collapse',
+                      fontSize: 13, fontFamily: 'var(--font-mono)'
+                    }}>
+                      <thead style={{ position: 'sticky', top: 0, background: 'var(--bg2)', zIndex: 1 }}>
+                        <tr>
+                          {[['Rank', 40], ['Center Frequency', 160], ['Count', 60], ['Usage', 60], ['Spread', 80]].map(([h, w]) => (
+                            <th key={h} style={{
+                              padding: '7px 14px', textAlign: 'left',
+                              borderBottom: '1px solid var(--border)',
+                              color: 'var(--text-muted)', fontWeight: 500,
+                              fontSize: 10, textTransform: 'uppercase',
+                              letterSpacing: '0.07em', width: w
+                            }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {channels.map((ch, i) => (
+                          <tr
+                            key={i}
+                            style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}
+                          >
+                            <td style={{ padding: '8px 14px', color: 'var(--text-dim)' }}>
+                              {i + 1}
+                            </td>
+                            <td style={{ padding: '8px 14px', color: '#4fc3f7', fontWeight: 600, fontSize: 14 }}>
+                              {fmtFreq(ch.centerHz + cfOffset)}
+                            </td>
+                            <td style={{ padding: '8px 14px', color: 'var(--text)' }}>
+                              {ch.count}
+                            </td>
+                            <td style={{ padding: '8px 14px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <div style={{
+                                  height: 6, borderRadius: 3,
+                                  background: 'var(--accent)',
+                                  width: `${Math.round((ch.count / total) * 60)}px`,
+                                  minWidth: 2
+                                }} />
+                                <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+                                  {((ch.count / total) * 100).toFixed(1)}%
+                                </span>
+                              </div>
+                            </td>
+                            <td style={{ padding: '8px 14px', color: 'var(--text-dim)', fontSize: 11 }}>
+                              {ch.spreadHz < 1 ? '< 1 Hz' : fmtFreq(ch.spreadHz)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )
+            })()}
 
             {/* Table tab */}
             <div style={{ flex: 1, overflow: 'auto', display: rightTab === 'table' ? 'block' : 'none' }}>
