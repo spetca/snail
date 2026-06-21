@@ -43,6 +43,8 @@ export function ControlsPanel(): React.ReactElement {
   const setAnnotationsVisible = useStore((s) => s.setAnnotationsVisible)
   const setScrollOffset = useStore((s) => s.setScrollOffset)
   const snapToView = useStore((s) => s.snapToView)
+  const showAbsoluteFrequency = useStore((s) => s.showAbsoluteFrequency)
+  const setShowAbsoluteFrequency = useStore((s) => s.setShowAbsoluteFrequency)
 
   // Real-time updates to analysis windows
   useEffect(() => {
@@ -235,7 +237,18 @@ export function ControlsPanel(): React.ReactElement {
           <InfoRow label="Samples" value={fileInfo.totalSamples.toLocaleString()} />
           <InfoRow label="Size" value={formatBytes(fileInfo.fileSize)} />
           {fileInfo.centerFrequency && (
-            <InfoRow label="Center" value={`${(fileInfo.centerFrequency / 1e6).toFixed(3)} MHz`} />
+            <>
+              <InfoRow label="Center" value={`${(fileInfo.centerFrequency / 1e6).toFixed(3)} MHz`} />
+              <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', marginTop: 4 }}>
+                <input
+                  type="checkbox"
+                  checked={showAbsoluteFrequency}
+                  onChange={(e) => setShowAbsoluteFrequency(e.target.checked)}
+                  style={{ accentColor: 'var(--accent)' }}
+                />
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Absolute frequency</span>
+              </label>
+            </>
           )}
         </Section>
       )}
@@ -340,8 +353,9 @@ function CursorInfoSection({
   const timeDelta = sampleDelta / sampleRate
 
   const yNormOffset = viewHeight > 0 ? yScrollOffset / (fftSize / 2) : 0
+  const cf = showAbsoluteFrequency ? (fileInfo?.centerFrequency ?? 0) : 0
   const freqFromY = (yPx: number) => viewHeight > 0
-    ? (0.5 - yNormOffset - yPx / viewHeight / yZoomLevel) * sampleRate
+    ? (0.5 - yNormOffset - yPx / viewHeight / yZoomLevel) * sampleRate + cf
     : 0
   const f1 = freqFromY(cursors.y1)
   const f2 = freqFromY(cursors.y2)
@@ -353,7 +367,15 @@ function CursorInfoSection({
       <InfoRow label={'\u0394 Samples'} value={sampleDelta.toLocaleString()} />
       <InfoRow label={'\u0394 Time'} value={formatTimeValue(timeDelta)} />
       {cursors.y1 !== cursors.y2 && (
-        <InfoRow label="BW" value={formatFrequency(bandwidth)} />
+        <>
+          <InfoRow label="BW" value={formatFrequency(bandwidth)} />
+          {showAbsoluteFrequency && (
+            <>
+              <InfoRow label="F1" value={formatFrequency(Math.max(f1, f2))} />
+              <InfoRow label="F2" value={formatFrequency(Math.min(f1, f2))} />
+            </>
+          )}
+        </>
       )}
       <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
         <button

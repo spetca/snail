@@ -12,6 +12,8 @@ export function FrequencyAxis(): React.ReactElement {
   const fftSize = useStore((s) => s.fftSize)
   const yZoomLevel = useStore((s) => s.yZoomLevel)
   const yScrollOffset = useStore((s) => s.yScrollOffset)
+  const showAbsoluteFrequency = useStore((s) => s.showAbsoluteFrequency)
+  const centerFrequency = useStore((s) => s.fileInfo?.centerFrequency ?? 0)
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -53,7 +55,8 @@ export function FrequencyAxis(): React.ReactElement {
     for (let i = 0; i <= numTicks; i++) {
       const y = (i / numTicks) * rect.height
       const normalizedPos = yOffset + (i / numTicks) * visibleFraction
-      const freq = halfRate - normalizedPos * sampleRate
+      const relFreq = halfRate - normalizedPos * sampleRate
+      const freq = relFreq + (showAbsoluteFrequency ? centerFrequency : 0)
 
       ctx.beginPath()
       ctx.moveTo(0, y)
@@ -62,7 +65,7 @@ export function FrequencyAxis(): React.ReactElement {
 
       ctx.fillText(formatFrequency(freq), 10, y + 4)
     }
-  }, [sampleRate, fftSize, yZoomLevel, yScrollOffset])
+  }, [sampleRate, fftSize, yZoomLevel, yScrollOffset, showAbsoluteFrequency, centerFrequency])
 
   return (
     <div

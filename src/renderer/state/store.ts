@@ -60,6 +60,9 @@ export interface AppState {
   classifierLoaded: boolean
   classifierLabels: string[]
 
+  // Frequency display
+  showAbsoluteFrequency: boolean
+
   // Playback
   isPlaying: boolean
   playheadSample: number
@@ -121,6 +124,8 @@ export interface AppState {
   setClassificationResults: (results: ClassificationResult[]) => void
   setClassifierLoaded: (loaded: boolean) => void
   setClassifierLabels: (labels: string[]) => void
+  setShowAbsoluteFrequency: (v: boolean) => void
+
   setIsPlaying: (v: boolean) => void
   setPlayheadSample: (v: number) => void
   setPlaybackSpeed: (v: number) => void
@@ -170,6 +175,7 @@ const initialState = {
   classificationResults: [] as ClassificationResult[],
   classifierLoaded: false,
   classifierLabels: [] as string[],
+  showAbsoluteFrequency: false,
   isPlaying: false,
   playheadSample: 0,
   playbackSpeed: 1,
@@ -291,6 +297,8 @@ export const useStore = create<AppState>((set, get) => ({
   setClassificationResults: (classificationResults) => set({ classificationResults }),
   setClassifierLoaded: (classifierLoaded) => set({ classifierLoaded }),
   setClassifierLabels: (classifierLabels) => set({ classifierLabels }),
+  setShowAbsoluteFrequency: (showAbsoluteFrequency) => set({ showAbsoluteFrequency }),
+
   setIsPlaying: (isPlaying) => set({ isPlaying }),
   setPlayheadSample: (playheadSample) => set({ playheadSample }),
   setPlaybackSpeed: (playbackSpeed) => set({ playbackSpeed }),

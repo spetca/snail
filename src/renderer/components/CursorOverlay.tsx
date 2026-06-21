@@ -42,6 +42,8 @@ export function CursorOverlay(): React.ReactElement {
   const setShowExportDialog = useStore((s) => s.setShowExportDialog)
   const playheadSample = useStore((s) => s.playheadSample)
   const isPlaying = useStore((s) => s.isPlaying)
+  const showAbsoluteFrequency = useStore((s) => s.showAbsoluteFrequency)
+  const centerFrequency = useStore((s) => s.fileInfo?.centerFrequency ?? 0)
 
   // Draw cursors
   useEffect(() => {
@@ -238,7 +240,8 @@ export function CursorOverlay(): React.ReactElement {
         // Absolute label for Y — must account for Y zoom/scroll (matches FrequencyAxis mapping)
         const totalBinsY = fftSize / 2
         const yNormOffset = yScrollOffset / totalBinsY
-        const freqVal = (0.5 - yNormOffset - (y / rect.height) / yZoomLevel) * sampleRate
+        const relFreqVal = (0.5 - yNormOffset - (y / rect.height) / yZoomLevel) * sampleRate
+        const freqVal = relFreqVal + (showAbsoluteFrequency ? centerFrequency : 0)
         const label = formatFrequency(freqVal)
         ctx.font = '10px "JetBrains Mono", monospace'
         const tw = ctx.measureText(label).width
@@ -268,7 +271,7 @@ export function CursorOverlay(): React.ReactElement {
         ctx.restore()
       }
     }
-  }, [cursors, annotations, annotationsVisible, classificationResults, fftSize, zoomLevel, sampleRate, scrollOffset, xAxisMode, yZoomLevel, yScrollOffset, hoverTarget, selectedAnnotationIndex, playheadSample, isPlaying])
+  }, [cursors, annotations, annotationsVisible, classificationResults, fftSize, zoomLevel, sampleRate, scrollOffset, xAxisMode, yZoomLevel, yScrollOffset, hoverTarget, selectedAnnotationIndex, playheadSample, isPlaying, showAbsoluteFrequency, centerFrequency])
 
   const hitTestTriangle = useCallback((mx: number, my: number): DragTarget => {
     const container = containerRef.current
