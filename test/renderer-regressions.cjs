@@ -261,3 +261,29 @@ test('new raw-IQ sidecar describes the actual datatype, sample rate, and dataset
     assert.equal(meta.annotations[0]['core:sample_start'], 2)
   } finally { fs.rmSync(dir, { recursive: true, force: true }) }
 })
+
+const { parseNumericDraft } = require('../src/renderer/utils/numeric-input.ts')
+test('numeric drafts support negatives, decimals and exponents without accepting incomplete or nonfinite input', () => {
+  for (const [text, value] of [['-100', -100], ['-.5', -.5], ['0.125', .125], ['1.', 1], ['1e-3', .001], [' 2.5e6 ', 2500000]]) {
+    assert.deepEqual(parseNumericDraft(text), { value, error: null })
+  }
+  for (const text of ['', '-', '+', '.', '1e', '1e-', '12abc', 'Infinity', 'NaN', '1e999', '0xff']) assert.ok(parseNumericDraft(text).error)
+  assert.equal(parseNumericDraft('', { optional: true }).error, null)
+  assert.ok(parseNumericDraft('0', { positive: true }).error)
+  assert.ok(parseNumericDraft('-1', { min: 0 }).error)
+  assert.ok(parseNumericDraft('101', { max: 100 }).error)
+  assert.ok(parseNumericDraft('1.5', { integer: true }).error)
+  assert.ok(parseNumericDraft('9007199254740992', { integer: true }).error)
+})
+
+test('invalid sample rates and correlation lengths cannot enter the store; power limits remain ordered', () => {
+  const s = useStore.getState(), rate = s.sampleRate, tu = s.tu, cp = s.cpLen
+  for (const value of [0, -1, NaN, Infinity]) {
+    s.setSampleRate(value); s.setTu(value); s.setCpLen(value)
+  }
+  s.setTu(1.5); s.setCpLen(1.5)
+  assert.equal(useStore.getState().sampleRate, rate)
+  assert.equal(useStore.getState().tu, tu); assert.equal(useStore.getState().cpLen, cp)
+  s.setPowerMin(100); assert.ok(useStore.getState().powerMin < useStore.getState().powerMax)
+  s.setPowerMax(-200); assert.ok(useStore.getState().powerMin < useStore.getState().powerMax)
+})

@@ -1,12 +1,16 @@
+import { NumericInput } from './NumericInput'
+import { requireValidInputs, type NumericRules } from '../utils/numeric-input'
 import { pixelToFrequency } from '../utils/selection'
 import { DatasetExport } from './DatasetExport'
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useStore } from '../state/store'
 import { recordingJob } from '../utils/recording'
 import { DEFAULT_DETECTION_CONFIG, matchesEventFilters, type DetectionConfig, type DetectionFrequencyRange, type ReviewStatus } from '../../shared/detection'
 import { formatFrequency, formatTimeValue } from '../../shared/units'
 
 export function DetectionPanel(): React.ReactElement {
+  const scanFields = useRef<HTMLFieldSetElement>(null)
+  const reviewFields = useRef<HTMLFieldSetElement>(null)
   const fileInfo = useStore(s => s.fileInfo)
   const frequencyMode = useStore(s => s.annotationFrequencyMode)
   const sampleRate = useStore(s => s.sampleRate)
@@ -46,6 +50,7 @@ export function DetectionPanel(): React.ReactElement {
 
   const startScan = () => operation(async () => {
     if (!fileInfo) return
+    requireValidInputs(scanFields.current)
     const state = useStore.getState(), job = recordingJob(fileInfo.recordingId)
     let startSample = 0, endSample = fileInfo.totalSamples
     let frequencyRange: DetectionFrequencyRange | undefined
@@ -67,6 +72,7 @@ export function DetectionPanel(): React.ReactElement {
 
   const review = (action: 'edit' | 'accept' | 'reject' | 'restore') => operation(async () => {
     if (!fileInfo || !selected) return
+    if (action === 'edit' || action === 'accept') requireValidInputs(reviewFields.current)
     const job = recordingJob(fileInfo.recordingId), state = useStore.getState()
     const patch = { sampleStart: Number(start), sampleCount: Number(end) - Number(start),
       freqLowerEdge: Number(low), freqUpperEdge: Number(high), label, comment }
@@ -82,16 +88,17 @@ export function DetectionPanel(): React.ReactElement {
     }
   })
 
-  const field = (title: string, value: string, change: (value: string) => void) => (
+  const field = (title: string, value: string, change: (value: string) => void, rules: NumericRules = {}) => (
     <label style={{ display: 'block', marginTop: 8, fontSize: 11 }}>{title}
-      <input aria-label={title} type="number" value={value} onChange={event => change(event.target.value)} style={{ width: '100%', marginTop: 3 }} />
+      <NumericInput aria-label={title} value={Number(value)} onValueChange={value => change(String(value))} {...rules} style={{ width: '100%', marginTop: 3 }} />
     </label>
   )
   const rangeField = (title: string, key: keyof Pick<DetectionConfig, 'minPulseWidthSeconds' | 'maxPulseWidthSeconds' | 'minBandwidthHz' | 'maxBandwidthHz'>, scale: number) => (
     <label style={{ display: 'block', marginTop: 8, fontSize: 11 }}>{title}
-      <input aria-label={title} type="number" min="0" step="any" placeholder="No limit"
-        value={config[key] == null ? '' : config[key]! * scale}
-        onChange={event => setConfig({ ...config, [key]: event.target.value === '' ? undefined : Number(event.target.value) / scale })}
+      <NumericInput aria-label={title} min={0} positive={key.startsWith('max')} placeholder="No limit"
+        value={config[key] == null ? undefined : config[key]! * scale}
+        onValueChange={value => setConfig({ ...config, [key]: value / scale })}
+        onClear={() => setConfig({ ...config, [key]: undefined })}
         style={{ width: '100%', marginTop: 3 }} />
     </label>
   )
@@ -104,7 +111,7 @@ export function DetectionPanel(): React.ReactElement {
       <button aria-label="Close detection panel" onClick={() => useStore.getState().setShowDetectionPanel(false)}>×</button>
     </div>
     <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '10px 0' }}>Find spectral activity, review its bounds, then save a label. Proposals are not annotations until accepted.</p>
-    <fieldset disabled={disabled} style={{ border: 0, padding: 0 }}>
+    <fieldset ref={scanFields} disabled={disabled} style={{ border: 0, padding: 0 }}>
       <label style={{ display: 'block', fontSize: 11 }}>Scan range
         <select aria-label="Scan range" value={region} onChange={event => setRegion(event.target.value as typeof region)} style={{ width: '100%', marginTop: 4 }}>
           <option value="view">Current view (time + frequency)</option><option value="selection" disabled={!selection}>Cursor time range</option><option value="recording">Entire recording</option>
@@ -123,8 +130,8 @@ export function DetectionPanel(): React.ReactElement {
           <option value="absolute">Absolute power</option>
         </select>
       </label>
-      {config.thresholdMode !== 'absolute' && field('Threshold above noise (dB)', String(config.thresholdDb), value => setConfig({ ...config, thresholdDb: Number(value) }))}
-      {field(config.thresholdMode === 'absolute' ? 'Absolute threshold (dB)' : 'Minimum power (dB)', String(config.minimumPowerDb), value => setConfig({ ...config, minimumPowerDb: Number(value) }))}
+      {config.thresholdMode !== 'absolute' && field('Threshold above noise (dB)', String(config.thresholdDb), value => setConfig({ ...config, thresholdDb: Number(value) }), { min: 3, max: 60 })}
+      {field(config.thresholdMode === 'absolute' ? 'Absolute threshold (dB)' : 'Minimum power (dB)', String(config.minimumPowerDb), value => setConfig({ ...config, minimumPowerDb: Number(value) }), { min: -200, max: 0 })}
       <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: '8px 0' }}>
         {config.thresholdMode === 'absolute'
           ? 'Starts regions above this fixed FFT power level; follows their edges down to 4 dB below it. Use the same FFT size as the view when comparing power. Values are not calibrated dBm.'
@@ -138,9 +145,9 @@ export function DetectionPanel(): React.ReactElement {
       </div>
       <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: '8px 0' }}>Blank means no limit. Filters apply to new detections and the review queue; existing labels are preserved. Widths use the detected box, including FFT window support and allowed gaps.</p>
       <details style={{ marginTop: 8, fontSize: 11 }}><summary>Detection settings</summary>
-        {field('Minimum frames', String(config.minFrames), value => setConfig({ ...config, minFrames: Number(value) }))}
-        {field('Minimum frequency bins', String(config.minBins), value => setConfig({ ...config, minBins: Number(value) }))}
-        {field('Allowed gap (frames)', String(config.maxGapFrames), value => setConfig({ ...config, maxGapFrames: Number(value) }))}
+        {field('Minimum frames', String(config.minFrames), value => setConfig({ ...config, minFrames: Number(value) }), { min: 1, max: 1000, integer: true })}
+        {field('Minimum frequency bins', String(config.minBins), value => setConfig({ ...config, minBins: Number(value) }), { min: 1, max: config.fftSize, integer: true })}
+        {field('Allowed gap (frames)', String(config.maxGapFrames), value => setConfig({ ...config, maxGapFrames: Number(value) }), { min: 0, max: 16, integer: true })}
       </details>
       <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: '8px 0' }}>Overlapping FFT windows cover the full time range. Dense wideband signals can hide the noise floor; this is an activity detector, not a protocol classifier.</p>
       {sampleRate !== fileInfo?.sampleRate && <p role="alert">Detection uses the recording sample rate. Restore it or save corrected metadata and reopen before scanning.</p>}
@@ -177,12 +184,12 @@ export function DetectionPanel(): React.ReactElement {
     {selected && <section aria-label="Proposal editor" style={{ borderTop: '1px solid var(--border)', marginTop: 12, paddingTop: 10 }}>
       <div style={{ fontSize: 11 }}>{selected.status} · revision {selected.revision} · {selected.peakAboveNoiseDb.toFixed(1)} dB above median noise</div>
       {selected.touchesBoundary && <p style={{ fontSize: 11 }}>Touches a scan/capture boundary; the transmission may continue outside this region.</p>}
-      <fieldset disabled={disabled || sampleRate !== fileInfo?.sampleRate || selected.status !== 'proposed'} style={{ border: 0, padding: 0 }}>
+      <fieldset ref={reviewFields} disabled={disabled || sampleRate !== fileInfo?.sampleRate || selected.status !== 'proposed'} style={{ border: 0, padding: 0 }}>
         <label style={{ display: 'block', marginTop: 8, fontSize: 11 }}>Event label
           <input aria-label="Event label" type="text" value={label} maxLength={128} placeholder="e.g. FSK burst, unknown beacon" onChange={event => setLabel(event.target.value)} style={{ width: '100%', marginTop: 3 }} />
         </label>
-        {field('Start sample', start, setStart)}{field('End sample (exclusive)', end, setEnd)}
-        {field('Lower frequency (baseband Hz)', low, setLow)}{field('Upper frequency (baseband Hz)', high, setHigh)}
+        {field('Start sample', start, setStart, { min: 0, max: (fileInfo?.totalSamples ?? 1) - 1, integer: true })}{field('End sample (exclusive)', end, setEnd, { min: 1, max: fileInfo?.totalSamples, integer: true })}
+        {field('Lower frequency (baseband Hz)', low, setLow, { min: -sampleRate / 2, max: sampleRate / 2 })}{field('Upper frequency (baseband Hz)', high, setHigh, { min: -sampleRate / 2, max: sampleRate / 2 })}
         <button disabled={!selection} style={{ marginTop: 8 }} onClick={() => {
           if (!selection) return
           setStart(String(Math.min(selection.sample1, selection.sample2))); setEnd(String(Math.max(selection.sample1, selection.sample2)))
