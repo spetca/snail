@@ -1,3 +1,4 @@
+import { NumericInput } from './NumericInput'
 import type { AnalysisSelection } from '../../shared/sample-formats'
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { useStore } from '../state/store'
@@ -323,10 +324,9 @@ export function FFTWindow(): React.ReactElement | null {
 
                     <div style={sidebarSectionStyle}>
                         <label style={labelStyle}>Sample Rate (Hz)</label>
-                        <input
-                            type="number"
+                        <NumericInput aria-label="FFT sample rate (Hz)" positive commitOnBlur
                             value={fftSettings.fs || cursorRange?.fs || sampleRate}
-                            onChange={e => setFFTSettings({ fs: Number(e.target.value) })}
+                            onValueChange={fs => setFFTSettings({ fs })}
                             style={inputStyle}
                         />
                     </div>

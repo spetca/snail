@@ -1,3 +1,4 @@
+import { NumericInput } from './NumericInput'
 import { recordingJob } from '../utils/recording'
 import React, { useRef, useEffect, useCallback } from 'react'
 import { useStore } from '../state/store'
@@ -43,40 +44,6 @@ export function CorrelationPane(): React.ReactElement {
 
   // Local state for flexible input
   const [inputMode, setInputMode] = React.useState<'samples' | 'time'>('samples')
-  const [tuText, setTuText] = React.useState(tu.toString())
-  const [cpText, setCpText] = React.useState(cpLen.toString())
-
-  // Sync text when tu/cp changes from outside (e.g. store reset or mode toggle)
-  useEffect(() => {
-    const currentTuVal = inputMode === 'samples' ? tu : tu / sampleRate
-    const currentCpVal = inputMode === 'samples' ? cpLen : cpLen / sampleRate
-
-    // Only update if the parsed value in the text box differs from the store
-    // This prevents "snapping" while typing (e.g. typing '66.6' -> '66.600e-6')
-    if (parseFloat(tuText) !== currentTuVal) {
-      setTuText(inputMode === 'samples' ? tu.toString() : (tu / sampleRate).toExponential(3))
-    }
-    if (parseFloat(cpText) !== currentCpVal) {
-      setCpText(inputMode === 'samples' ? cpLen.toString() : (cpLen / sampleRate).toExponential(3))
-    }
-  }, [tu, cpLen, inputMode, sampleRate])
-
-  const handleTuChange = (val: string) => {
-    setTuText(val)
-    const num = parseFloat(val)
-    if (!isNaN(num) && isFinite(num)) {
-      setTu(Math.round(inputMode === 'time' ? num * sampleRate : num))
-    }
-  }
-
-  const handleCpChange = (val: string) => {
-    setCpText(val)
-    const num = parseFloat(val)
-    if (!isNaN(num) && isFinite(num)) {
-      setCpLen(Math.round(inputMode === 'time' ? num * sampleRate : num))
-    }
-  }
-
   // Compute search window from X cursors
   const samplesPerPixel = Math.max(1, Math.round(fftSize / zoomLevel))
   const windowStart = Math.round(
@@ -419,20 +386,24 @@ export function CorrelationPane(): React.ReactElement {
 
             <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>Tu:</span>
-              <input
-                type="text"
-                value={tuText}
-                onChange={(e) => handleTuChange(e.target.value)}
+              <NumericInput key={inputMode} aria-label="Tu correlation interval" commitOnBlur positive
+                integer={inputMode === 'samples'}
+                min={inputMode === 'samples' ? 1 : 1 / sampleRate}
+                max={inputMode === 'samples' ? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER / sampleRate}
+                value={inputMode === 'samples' ? tu : tu / sampleRate}
+                onValueChange={value => setTu(Math.round(inputMode === 'time' ? value * sampleRate : value))}
                 style={{ width: 70, fontSize: 10, padding: '1px 4px', fontFamily: 'var(--font-mono)' }}
                 placeholder={inputMode === 'samples' ? 'Samples' : 'e.g. 66e-6'}
               />
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>CP:</span>
-              <input
-                type="text"
-                value={cpText}
-                onChange={(e) => handleCpChange(e.target.value)}
+              <NumericInput key={inputMode} aria-label="CP correlation interval" commitOnBlur positive
+                integer={inputMode === 'samples'}
+                min={inputMode === 'samples' ? 1 : 1 / sampleRate}
+                max={inputMode === 'samples' ? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER / sampleRate}
+                value={inputMode === 'samples' ? cpLen : cpLen / sampleRate}
+                onValueChange={value => setCpLen(Math.round(inputMode === 'time' ? value * sampleRate : value))}
                 style={{ width: 70, fontSize: 10, padding: '1px 4px', fontFamily: 'var(--font-mono)' }}
                 placeholder={inputMode === 'samples' ? 'Samples' : 'e.g. 16e-6'}
               />

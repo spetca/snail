@@ -1,4 +1,6 @@
-import React, { useState, useEffect } from 'react'
+import { NumericInput } from './NumericInput'
+import { requireValidInputs } from '../utils/numeric-input'
+import React, { useState, useRef } from 'react'
 import type { ProbeResult } from '../../shared/sample-formats'
 
 interface Props {
@@ -33,14 +35,12 @@ export function PartialImportDialog({ filePath, probe, onConfirm, onCancel }: Pr
   const [startSecs, setStartSecs] = useState(0)
   const [endSecs, setEndSecs] = useState(Math.min(totalSecs, 60))
 
-  // Keep end in bounds when start changes
-  useEffect(() => {
-    if (endSecs <= startSecs) setEndSecs(Math.min(startSecs + 1, totalSecs))
-  }, [startSecs])
+  const fields = useRef<HTMLDivElement>(null)
+  const [error, setError] = useState<string | null>(null)
 
   const clampedStart = Math.max(0, Math.min(startSecs, totalSecs))
   const clampedEnd = Math.max(clampedStart, Math.min(endSecs, totalSecs))
-  const selectionSamples = Math.round((clampedEnd - clampedStart) * sampleRate)
+  const selectionSamples = Math.round(clampedEnd * sampleRate) - Math.round(clampedStart * sampleRate)
   const viewStart = Math.round(clampedStart * sampleRate)
 
   const fileName = filePath.split('/').pop() ?? filePath
@@ -62,7 +62,7 @@ export function PartialImportDialog({ filePath, probe, onConfirm, onCancel }: Pr
   }
 
   return (
-    <div style={{
+    <div ref={fields} style={{
       position: 'fixed', inset: 0, zIndex: 200,
       background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
       display: 'flex', alignItems: 'center', justifyContent: 'center'
@@ -105,27 +105,23 @@ export function PartialImportDialog({ filePath, probe, onConfirm, onCancel }: Pr
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span style={labelStyle}>Start</span>
-            <input
-              type="number"
+            <NumericInput aria-label="Import start (seconds)"
               style={inputStyle}
               value={startSecs}
               min={0}
               max={totalSecs}
-              step={0.001}
-              onChange={(e) => setStartSecs(Number(e.target.value))}
+              onValueChange={setStartSecs}
             />
             <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>s</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span style={labelStyle}>End</span>
-            <input
-              type="number"
+            <NumericInput aria-label="Import end (seconds)"
               style={inputStyle}
               value={endSecs}
-              min={startSecs}
+              min={0}
               max={totalSecs}
-              step={0.001}
-              onChange={(e) => setEndSecs(Number(e.target.value))}
+              onValueChange={setEndSecs}
             />
             <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>s</span>
           </div>
@@ -137,6 +133,7 @@ export function PartialImportDialog({ filePath, probe, onConfirm, onCancel }: Pr
           </div>
         </div>
 
+        {error && <p role="alert" style={{ color: 'var(--error, #ff6b6b)' }}>{error}</p>}
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
           <button
             onClick={onCancel}
@@ -157,7 +154,13 @@ export function PartialImportDialog({ filePath, probe, onConfirm, onCancel }: Pr
             Load Full File
           </button>
           <button
-            onClick={() => onConfirm(viewStart, selectionSamples)}
+            onClick={() => {
+              try {
+                requireValidInputs(fields.current)
+                if (selectionSamples <= 0 || endSecs <= startSecs) throw new Error('Choose an end time after the start, spanning at least one sample.')
+                onConfirm(viewStart, selectionSamples)
+              } catch (error) { setError(String(error)) }
+            }}
             title="Opens the full file, jumps view to this range"
             style={{
               padding: '6px 14px', borderRadius: 5, border: 'none',
