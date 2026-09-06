@@ -20,6 +20,12 @@ export default defineConfig({
         '@': resolve('src/renderer')
       }
     },
-    plugins: [react()]
+    plugins: [react()],
+    server: {
+      // Explicit IPv4 — on Linux 'localhost' can resolve to ::1 (IPv6)
+      // while Electron's renderer connects via 127.0.0.1, causing ECONNREFUSED
+      host: '127.0.0.1',
+      strictPort: false
+    }
   }
 })

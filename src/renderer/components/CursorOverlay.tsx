@@ -1,4 +1,5 @@
-import React, { useRef, useEffect, useCallback, useState } from 'react'
+import { annotationBands, centerFrequencyAt } from '../../shared/sigmf'
+import React, { useRef, useEffect, useCallback, useState, useMemo } from 'react'
 import { useStore } from '../state/store'
 import { formatTimeValue, formatFrequency } from '../../shared/units'
 
@@ -10,7 +11,7 @@ const TRI_HOVER = '#FFE44D'
 
 const ANNOTATION_COLORS = ['#FF6B6B', '#4DABF7', '#51CF66', '#FFD43B', '#CC5DE8', '#FF922B']
 
-type DragTarget = 'x1' | 'x2' | 'y1' | 'y2' | 'all' | null
+type DragTarget = 'x1' | 'x2' | 'y1' | 'y2' | 'all' | 'selection' | null
 
 export function CursorOverlay(): React.ReactElement {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -21,7 +22,11 @@ export function CursorOverlay(): React.ReactElement {
 
   const cursors = useStore((s) => s.cursors)
   const annotations = useStore((s) => s.annotations)
+  const frequencyMode = useStore((s) => s.annotationFrequencyMode)
   const annotationsVisible = useStore((s) => s.annotationsVisible)
+  const eventProject = useStore(s => s.eventProject)
+  const selectedProposalId = useStore(s => s.selectedProposalId)
+  const classificationResults = useStore((s) => s.classificationResults)
   const sampleRate = useStore((s) => s.sampleRate)
   const fftSize = useStore((s) => s.fftSize)
   const zoomLevel = useStore((s) => s.zoomLevel)
@@ -33,12 +38,18 @@ export function CursorOverlay(): React.ReactElement {
   const setCursorY = useStore((s) => s.setCursorY)
   const fileInfo = useStore((s) => s.fileInfo)
   const viewWidth = useStore((s) => s.viewWidth)
+  const viewHeight = useStore((s) => s.viewHeight)
   const setZoomLevel = useStore((s) => s.setZoomLevel)
   const setScrollOffset = useStore((s) => s.setScrollOffset)
   const selectedAnnotationIndex = useStore((s) => s.selectedAnnotationIndex)
   const setSelectedAnnotationIndex = useStore((s) => s.setSelectedAnnotationIndex)
   const setPendingExport = useStore((s) => s.setPendingExport)
   const setShowExportDialog = useStore((s) => s.setShowExportDialog)
+  const playheadSample = useStore((s) => s.playheadSample)
+  const isPlaying = useStore((s) => s.isPlaying)
+  const showAbsoluteFrequency = useStore((s) => s.showAbsoluteFrequency)
+  const centerFrequency = centerFrequencyAt(fileInfo, scrollOffset)
+  const bands = useMemo(() => fileInfo ? annotationBands(annotations, fileInfo, frequencyMode) : [], [annotations, fileInfo, frequencyMode])
 
   // Draw cursors
   useEffect(() => {
@@ -67,8 +78,7 @@ export function CursorOverlay(): React.ReactElement {
     const visibleBins = totalBins / yZoomLevel
     const yScrollBins = yScrollOffset / totalBins // normalized
 
-    for (let i = 0; annotationsVisible && i < annotations.length; i++) {
-      const ann = annotations[i]
+    for (const { annotation: ann, index: i } of annotationsVisible ? bands : []) {
       const color = ANNOTATION_COLORS[i % ANNOTATION_COLORS.length]
 
       const ax1 = (ann.sampleStart - scrollOffset) / samplesPerPx
@@ -95,7 +105,7 @@ export function CursorOverlay(): React.ReactElement {
       const drawY1 = Math.max(0, Math.min(ay1, ay2))
       const drawY2 = Math.min(rect.height, Math.max(ay1, ay2))
 
-      if (drawX2 <= drawX1) continue
+      if (drawX2 <= drawX1 || drawY2 <= drawY1) continue
 
       // Semi-transparent fill
       ctx.fillStyle = color + '33'
@@ -123,6 +133,80 @@ export function CursorOverlay(): React.ReactElement {
         ctx.fillStyle = color
         ctx.fillText(ann.label, lx + labelPadX, ly + labelH - labelPadY)
       }
+    }
+
+    // Proposals use baseband bounds; accepted events appear as SigMF annotations.
+    for (const [index, event] of (eventProject?.proposals ?? []).entries()) {
+      if (event.status !== 'proposed') continue
+      let left = Math.max(0, (event.sampleStart - scrollOffset) / samplesPerPx)
+      let right = Math.min(rect.width, (event.sampleStart + event.sampleCount - scrollOffset) / samplesPerPx)
+      let top = Math.max(0, (0.5 - event.freqUpperEdge / sampleRate - yScrollBins) * yZoomLevel * rect.height)
+      let bottom = Math.min(rect.height, (0.5 - event.freqLowerEdge / sampleRate - yScrollBins) * yZoomLevel * rect.height)
+      if (right <= left || bottom <= top) continue
+      // Keep narrow/short events visible when zoomed out; source bounds remain exact.
+      const compact = right - left < 4 || bottom - top < 4
+      if (right - left < 4) {
+        left = Math.max(0, Math.min(rect.width - 4, (left + right) / 2 - 2))
+        right = Math.min(rect.width, left + 4)
+      }
+      if (bottom - top < 4) {
+        top = Math.max(0, Math.min(rect.height - 4, (top + bottom) / 2 - 2))
+        bottom = Math.min(rect.height, top + 4)
+      }
+      const color = event.id === selectedProposalId ? '#00D4AA' : '#FFB454'
+      ctx.fillStyle = color + '33'
+      ctx.fillRect(left, top, right - left, bottom - top)
+      ctx.setLineDash([])
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)'
+      ctx.lineWidth = 4
+      ctx.strokeRect(left, top, right - left, bottom - top)
+      ctx.strokeStyle = color
+      ctx.lineWidth = 2
+      ctx.setLineDash(compact ? [] : [5, 3])
+      ctx.strokeRect(left, top, right - left, bottom - top)
+      ctx.setLineDash([])
+      ctx.save()
+      ctx.beginPath(); ctx.rect(left, top, right - left, bottom - top); ctx.clip()
+      ctx.font = '10px monospace'
+      ctx.fillStyle = color
+      ctx.fillText(event.label || `Candidate ${index + 1}`, left + 4, top + 13)
+      ctx.restore()
+    }
+
+    // Draw classification result bands (dashed border, label + confidence)
+    for (let i = 0; i < classificationResults.length; ++i) {
+      const cr = classificationResults[i]
+      const color = ANNOTATION_COLORS[i % ANNOTATION_COLORS.length]
+
+      const bx1 = (cr.sampleStart - scrollOffset) / samplesPerPx
+      const bx2 = (cr.sampleStart + cr.sampleCount - scrollOffset) / samplesPerPx
+
+      const drawX1 = Math.max(0, bx1)
+      const drawX2 = Math.min(rect.width, bx2)
+      if (drawX2 <= drawX1) continue
+
+      // Semi-transparent fill, slightly more transparent than annotations
+      const alpha = Math.round(cr.confidence * 0x44).toString(16).padStart(2, '0')
+      ctx.fillStyle = color + alpha
+      ctx.fillRect(drawX1, 0, drawX2 - drawX1, rect.height)
+
+      // Dashed border (distinguishes from solid annotation border)
+      ctx.strokeStyle = color + 'BB'
+      ctx.lineWidth = 1
+      ctx.setLineDash([4, 3])
+      ctx.strokeRect(drawX1, 0, drawX2 - drawX1, rect.height)
+      ctx.setLineDash([])
+
+      // Label + confidence at top-left
+      const labelText = `${cr.label} ${Math.round(cr.confidence * 100)}%`
+      ctx.font = '9px "JetBrains Mono", monospace'
+      const tw = ctx.measureText(labelText).width
+      const lx = drawX1 + 1
+      const ly = 2
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'
+      ctx.fillRect(lx, ly, tw + 6, 13)
+      ctx.fillStyle = color
+      ctx.fillText(labelText, lx + 3, ly + 10)
     }
 
     if (cursors.enabled) {
@@ -199,7 +283,8 @@ export function CursorOverlay(): React.ReactElement {
         // Absolute label for Y — must account for Y zoom/scroll (matches FrequencyAxis mapping)
         const totalBinsY = fftSize / 2
         const yNormOffset = yScrollOffset / totalBinsY
-        const freqVal = (0.5 - yNormOffset - (y / rect.height) / yZoomLevel) * sampleRate
+        const relFreqVal = (0.5 - yNormOffset - (y / rect.height) / yZoomLevel) * sampleRate
+        const freqVal = relFreqVal + (showAbsoluteFrequency ? centerFrequency : 0)
         const label = formatFrequency(freqVal)
         ctx.font = '10px "JetBrains Mono", monospace'
         const tw = ctx.measureText(label).width
@@ -210,7 +295,26 @@ export function CursorOverlay(): React.ReactElement {
         ctx.fillText(label, rect.width - TRI_H - tw - 9, y + 4)
       }
     } // end if (cursors.enabled)
-  }, [cursors, annotations, annotationsVisible, fftSize, zoomLevel, sampleRate, scrollOffset, xAxisMode, yZoomLevel, yScrollOffset, hoverTarget, selectedAnnotationIndex])
+
+    // Playhead line
+    if (isPlaying) {
+      const stride = Math.max(1, Math.round(fftSize / zoomLevel))
+      const px = (playheadSample - scrollOffset) / stride
+      if (px >= 0 && px <= rect.width) {
+        ctx.save()
+        ctx.strokeStyle = '#00e5ff'
+        ctx.lineWidth = 1.5
+        ctx.shadowColor = '#00e5ff'
+        ctx.shadowBlur = 4
+        ctx.setLineDash([])
+        ctx.beginPath()
+        ctx.moveTo(px, 0)
+        ctx.lineTo(px, rect.height)
+        ctx.stroke()
+        ctx.restore()
+      }
+    }
+  }, [eventProject, selectedProposalId, cursors, annotations, bands, annotationsVisible, classificationResults, fftSize, zoomLevel, sampleRate, scrollOffset, xAxisMode, yZoomLevel, yScrollOffset, hoverTarget, selectedAnnotationIndex, playheadSample, isPlaying, showAbsoluteFrequency, centerFrequency, viewWidth, viewHeight])
 
   const hitTestTriangle = useCallback((mx: number, my: number): DragTarget => {
     const container = containerRef.current
@@ -237,7 +341,7 @@ export function CursorOverlay(): React.ReactElement {
 
   const hitTestAnnotation = useCallback((mx: number, my: number): number | null => {
     const container = containerRef.current
-    if (!container) return null
+    if (!container || !annotationsVisible) return null
     const rect = container.getBoundingClientRect()
 
     const stride = Math.max(1, Math.round(fftSize / zoomLevel))
@@ -246,8 +350,8 @@ export function CursorOverlay(): React.ReactElement {
     const yScrollBins = yScrollOffset / totalBins
 
     // Reverse order so top-most (last drawn) annotations are hit first
-    for (let i = annotations.length - 1; i >= 0; i--) {
-      const ann = annotations[i]
+    for (let b = bands.length - 1; b >= 0; b--) {
+      const { annotation: ann, index: i } = bands[b]
       const ax1 = (ann.sampleStart - scrollOffset) / samplesPerPx
       const ax2 = (ann.sampleStart + ann.sampleCount - scrollOffset) / samplesPerPx
 
@@ -270,7 +374,7 @@ export function CursorOverlay(): React.ReactElement {
       }
     }
     return null
-  }, [annotations, fftSize, zoomLevel, scrollOffset, yScrollOffset, yZoomLevel, sampleRate])
+  }, [annotations, bands, annotationsVisible, fftSize, zoomLevel, scrollOffset, yScrollOffset, yZoomLevel, sampleRate])
 
   const findTarget = useCallback((x: number, y: number): DragTarget => {
     // Check triangles first (easier to grab)
@@ -299,8 +403,17 @@ export function CursorOverlay(): React.ReactElement {
     return 'crosshair'
   }, [dragging])
 
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (!cursors.enabled) return
+  // Clamp X pixel position so cursor can't exceed the file's sample range
+  const clampX = useCallback((px: number, containerWidth: number): number => {
+    if (!fileInfo) return Math.max(0, Math.min(containerWidth, px))
+    const stride = Math.max(1, Math.round(fftSize / zoomLevel))
+    const maxPx = (fileInfo.totalSamples - scrollOffset) / stride
+    return Math.max(0, Math.min(Math.min(containerWidth, maxPx), px))
+  }, [fileInfo, fftSize, zoomLevel, scrollOffset])
+
+  const handleMouseDown = useCallback((e: React.PointerEvent) => {
+    if (!cursors.enabled || e.button !== 0) return
+    e.currentTarget.setPointerCapture(e.pointerId)
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
@@ -335,22 +448,14 @@ export function CursorOverlay(): React.ReactElement {
         const cy = Math.max(0, Math.min(rect.height, y))
         setCursorX(cx, cx)
         setCursorY(cy, cy)
-        setDragging('x2')
+        setDragging('selection')
         setDragStart({ x: cx, y: cy })
         setSelectedAnnotationIndex(null)
       }
     }
-  }, [cursors.enabled, findTarget, hitTestAnnotation, annotations, fileInfo, fftSize, viewWidth, setCursorX, setCursorY, setZoomLevel, setScrollOffset, setSelectedAnnotationIndex])
+  }, [cursors.enabled, findTarget, hitTestAnnotation, annotations, fileInfo, fftSize, viewWidth, setCursorX, setCursorY, setZoomLevel, setScrollOffset, setSelectedAnnotationIndex, clampX])
 
-  // Clamp X pixel position so cursor can't exceed the file's sample range
-  const clampX = useCallback((px: number, containerWidth: number): number => {
-    if (!fileInfo) return Math.max(0, Math.min(containerWidth, px))
-    const stride = Math.max(1, Math.round(fftSize / zoomLevel))
-    const maxPx = (fileInfo.totalSamples - scrollOffset) / stride
-    return Math.max(0, Math.min(Math.min(containerWidth, maxPx), px))
-  }, [fileInfo, fftSize, zoomLevel, scrollOffset])
-
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+  const handleMouseMove = useCallback((e: React.PointerEvent) => {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     const rawX = e.clientX - rect.left
     const rawY = e.clientY - rect.top
@@ -367,15 +472,22 @@ export function CursorOverlay(): React.ReactElement {
     const dy = y - dragStart.y
 
     switch (dragging) {
+      case 'selection':
+        setCursorX(cursors.x1, x)
+        setCursorY(cursors.y1, y)
+        break
       case 'x1': setCursorX(x, cursors.x2); break
       case 'x2': setCursorX(cursors.x1, x); break
       case 'y1': setCursorY(y, cursors.y2); break
       case 'y2': setCursorY(cursors.y1, y); break
       case 'all': {
-        const nx1 = clampX(cursors.x1 + dx, rect.width)
-        const nx2 = clampX(cursors.x2 + dx, rect.width)
-        const ny1 = Math.max(0, Math.min(rect.height, cursors.y1 + dy))
-        const ny2 = Math.max(0, Math.min(rect.height, cursors.y2 + dy))
+        // Clamp movement as a whole so selection dimensions stay unchanged.
+        const moveX = Math.max(-Math.min(cursors.x1, cursors.x2), Math.min(clampX(rect.width, rect.width) - Math.max(cursors.x1, cursors.x2), dx))
+        const moveY = Math.max(-Math.min(cursors.y1, cursors.y2), Math.min(rect.height - Math.max(cursors.y1, cursors.y2), dy))
+        const nx1 = cursors.x1 + moveX
+        const nx2 = cursors.x2 + moveX
+        const ny1 = cursors.y1 + moveY
+        const ny2 = cursors.y2 + moveY
         setCursorX(nx1, nx2)
         setCursorY(ny1, ny2)
         setDragStart({ x, y })
@@ -384,18 +496,18 @@ export function CursorOverlay(): React.ReactElement {
     }
   }, [dragging, dragStart, cursors, setCursorX, setCursorY, findTarget, clampX])
 
-  const handleMouseUp = useCallback(() => {
+  const handleMouseUp = useCallback((e: React.PointerEvent) => {
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
     setDragging(null)
   }, [])
 
   const handleMouseLeave = useCallback(() => {
-    setDragging(null)
     setHoverTarget(null)
   }, [])
 
-  if (!cursors.enabled && annotations.length === 0) return <></>
+  if (!cursors.enabled && annotations.length === 0 && classificationResults.length === 0 && !eventProject?.proposals.some(p => p.status === 'proposed') && !isPlaying) return <></>
 
-  const selectedAnn = selectedAnnotationIndex !== null ? annotations[selectedAnnotationIndex] : null
+  const selectedAnn = annotationsVisible && selectedAnnotationIndex !== null ? annotations[selectedAnnotationIndex] : null
 
   return (
     <div
@@ -411,15 +523,19 @@ export function CursorOverlay(): React.ReactElement {
         pointerEvents: cursors.enabled ? 'auto' : 'none',
         zIndex: 10
       }}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseLeave}
+      onPointerDown={handleMouseDown}
+      onPointerMove={handleMouseMove}
+      onPointerUp={handleMouseUp}
+      onPointerCancel={handleMouseUp}
+      onLostPointerCapture={() => setDragging(null)}
+      onPointerLeave={handleMouseLeave}
     >
       <canvas ref={canvasRef} style={{ width: '100%', height: '100%' }} />
 
       {selectedAnn && (
         <div
+          onPointerDown={(e) => e.stopPropagation()}
+          onWheel={(e) => e.stopPropagation()}
           style={{
             position: 'absolute',
             top: 20,

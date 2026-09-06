@@ -7,7 +7,9 @@ export function useSpectrogram() {
   const scrollOffset = useStore((s) => s.scrollOffset)
   const fileInfo = useStore((s) => s.fileInfo)
 
-  const samplesPerColumn = fftSize / zoomLevel
+  const yZoomLevel = useStore((s) => s.yZoomLevel)
+  const yScrollOffset = useStore((s) => s.yScrollOffset)
+  const samplesPerColumn = Math.max(1, Math.round(fftSize / zoomLevel))
 
   const sampleToPixel = useCallback((sample: number): number => {
     return (sample - scrollOffset) / samplesPerColumn
@@ -18,9 +20,9 @@ export function useSpectrogram() {
   }, [scrollOffset, samplesPerColumn])
 
   const pixelToFrequency = useCallback((pixelY: number, plotHeight: number, sampleRate: number): number => {
-    // From spectrogramplot.cpp line 195: freq = (0.5 - pixelY/plotHeight) * sampleRate
-    return (0.5 - pixelY / plotHeight) * sampleRate
-  }, [])
+    if (plotHeight <= 0) return 0
+    return (0.5 - yScrollOffset / (fftSize / 2) - pixelY / plotHeight / yZoomLevel) * sampleRate
+  }, [fftSize, yZoomLevel, yScrollOffset])
 
   return {
     fftSize,

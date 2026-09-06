@@ -21,6 +21,8 @@ export interface SigMFAnnotation {
 }
 
 export interface FileInfo {
+  /** Unique to this open operation, including reopens of the same path. */
+  recordingId: string
   path: string
   format: SampleFormat
   sampleRate: number
@@ -28,15 +30,27 @@ export interface FileInfo {
   fileSize: number
   centerFrequency?: number
   sigmfMetaJson?: string
+  /** Total samples in the full file (differs from totalSamples when a view window is active) */
+  fileTotal?: number
+}
+
+export interface ProbeResult {
+  totalSamples: number
+  sampleRate: number
+  format: SampleFormat
+  fileSize: number
+  centerFrequency?: number
 }
 
 export interface FFTTileRequest {
+  recordingId: string
   startSample: number
   fftSize: number
   stride: number
 }
 
 export interface ExportConfig {
+  recordingId: string
   outputPath: string
   startSample: number
   endSample: number
@@ -50,6 +64,7 @@ export interface ExportConfig {
 }
 
 export interface CorrelateRequest {
+  recordingId: string
   mode: 'file' | 'self'
   windowStart: number
   windowLength: number
@@ -59,6 +74,56 @@ export interface CorrelateRequest {
   // For 'self' mode
   tu?: number
   cpLen?: number
+}
+
+export interface FFTConfigRequest {
+  recordingId: string
+  startSample: number
+  length: number
+  fftSize: number
+  window: 'none' | 'hann' | 'hamming' | 'blackman'
+  shift: boolean
+  scale: 'abs' | 'log'
+  sampleRate?: number
+}
+
+export interface FFTResult {
+  data: Float32Array
+  frequencies?: Float32Array
+  maxPower: number
+  minPower: number
+}
+
+export interface ClassificationResult {
+  sampleStart: number
+  sampleCount: number
+  label: string
+  confidence: number
+}
+
+export interface PulseRecord {
+  pulseNumber: number
+  startSample: number
+  endSample: number
+  startTimeSecs: number
+  endTimeSecs: number
+  measuredWidthSecs: number
+  centerFrequencyHz: number
+  occupiedBandwidthHz: number
+  priSecs: number  // -1 for first pulse
+}
+
+export interface PulseFindRequest {
+  recordingId: string
+  targetWidthSecs: number
+  widthTolSecs: number
+  targetOBWHz: number
+  obwTolHz: number
+  sampleRate: number
+  startSample?: number
+  endSample?: number
+  thresholdDb?: number
+  obwPercentile?: number
 }
 
 export const FORMAT_EXTENSIONS: Record<string, SampleFormat> = {
@@ -94,4 +159,11 @@ export const SAMPLE_BYTE_SIZES: Record<SampleFormat, number> = {
   rs16: 2,
   rs8: 1,
   ru8: 1
+}
+
+export interface AnalysisSelection {
+  recordingId: string
+  start: number
+  length: number
+  fs: number
 }

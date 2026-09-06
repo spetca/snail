@@ -29,6 +29,22 @@ Snail handles multi-gigabyte recordings with instant load times via memory-mappe
 - **Cross-correlation** — FFT-based cross-correlation against a second file
 - **Time/Samples toggle** — Switch X-axis between raw sample indices and SI-formatted time
 
+## Detect and review transmissions
+
+Open a recording, choose **Detect & label** in the toolbar, select a scan range, then click **Find transmissions**. Current view scans both the visible time range and frequency band, including vertical zoom. Orange boxes mark proposed activity; tiny boxes use solid outlines and a minimum display size so they remain visible without changing their sample/frequency bounds. Select a candidate to focus the spectrogram, adjust sample/frequency bounds (or use the cursors), enter a label, and choose **Accept label**. You can also save edits, reject candidates, and restore rejected candidates.
+
+Use the **Min/Max pulse width (ms)** and **Min/Max bandwidth (kHz)** fields to narrow detection and the existing review queue. Blank fields impose no limit; endpoints are inclusive. Width is measured from the detected box, including FFT window support and bridged gaps.
+
+If the 2,000-proposal limit is reached, finish or cancel the scan, then open **Queue management → Reset review queue**. Reset archives the review project and clears its proposals and scan history, while preserving accepted SigMF labels. Export accepted events first if you need them in a dataset from the current queue. Apply narrower filters before scanning again.
+
+Accepted labels are written to the recording's SigMF metadata; raw IQ is unchanged. The local review queue retains edits, decisions, detector settings, and revision history across restarts. Exact rescans preserve existing decisions. Scans show progress and can be cancelled.
+
+The default detector finds spectral energy above a per-frame median noise estimate. Bright signals filling most of the visible band can raise that estimate and be missed. Choose **Power threshold mode → Absolute power** to detect above a fixed FFT power level instead; match the detection FFT size to the viewer when comparing levels. Its 4 dB hysteresis follows weaker edges after a region starts. Existing proposals remain until the queue is reset. It does **not** identify protocols automatically, and dense wideband activity can hide its noise estimate. Start with a short representative range and inspect the boxes. Open the full recording before scanning; partial-file load windows are not supported by this workflow yet. The viewer's sample rate must match the recording rate.
+
+After accepting events, use **Export accepted dataset** in the same panel. Export a labels/source manifest, unfiltered IQ crops, or tuned and filtered IQ. Each dataset includes source and artifact checksums, accepted review history, sample alignment, and a Python reader. See [dataset export details](docs/dataset-export.md) for the format and current limits.
+
+See the [RFML roadmap](docs/rfml-roadmap.md) for implementation status, limitations, and the path toward similarity search, channelization, packet analysis, and reproducible datasets.
+
 ## Installation
 
 ### Docker with noVNC 
@@ -181,6 +197,10 @@ Generated IQ files and the `venv/` directory are gitignored — run the scripts 
 | `.rs16`, `.s16` | rs16 | Real signed int16 |
 | `.rs8`, `.s8` | rs8 | Real signed int8 |
 | `.ru8`, `.u8` | ru8 | Real unsigned int8 |
+
+## Development roadmap
+
+See the [RFML and reverse engineering roadmap](docs/rfml-roadmap.md) for the bug audit, automated labeling workflow, feature priorities, and acceptance gates. Run `npm test` for renderer/session/metadata regressions and `npm run build` for the type-checked application build. After building the native addon, run `npm run test:native`; use `npm run test:desktop` for the synthetic Electron interaction/GPU smoke test.
 
 ## Architecture
 

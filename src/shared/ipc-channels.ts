@@ -1,4 +1,7 @@
 export const IPC = {
+  EXPORT_DATASET: 'snail:export-dataset',
+  DATASET_STATE: 'snail:dataset-state',
+  CANCEL_DATASET: 'snail:cancel-dataset',
   OPEN_FILE: 'snail:open-file',
   GET_SAMPLES: 'snail:get-samples',
   COMPUTE_FFT_TILE: 'snail:compute-fft-tile',
@@ -7,5 +10,23 @@ export const IPC = {
   READ_FILE_SAMPLES: 'snail:read-file-samples',
   SHOW_OPEN_DIALOG: 'snail:show-open-dialog',
   SHOW_SAVE_DIALOG: 'snail:show-save-dialog',
-  SAVE_ANNOTATION: 'snail:save-annotation'
+  SAVE_ANNOTATION: 'snail:save-annotation',
+  COMPUTE_FFT: 'snail:compute-fft',
+  OPEN_FFT_WINDOW: 'snail:open-fft-window',
+  FFT_WINDOW_UPDATE: 'snail:fft-window-update',
+  OPEN_CONSTELLATION_WINDOW: 'snail:open-constellation-window',
+  CONSTELLATION_WINDOW_UPDATE: 'snail:constellation-window-update',
+  EXTRACT_FEATURES: 'snail:extract-features',
+  EXPORT_FEATURES: 'snail:export-features',
+  LOAD_CLASSIFIER: 'snail:load-classifier',
+  CLASSIFY_REGION: 'snail:classify-region',
+  SHOW_OPEN_JSON_DIALOG: 'snail:show-open-json-dialog',
+  TRAIN_CLASSIFIER: 'snail:train-classifier',
+  PROBE_FILE: 'snail:probe-file',
+  FIND_PULSES: 'snail:find-pulses',
+  DETECTION_STATE: 'snail:detection-state',
+  START_DETECTION: 'snail:start-detection',
+  CANCEL_DETECTION: 'snail:cancel-detection',
+  RESET_DETECTION: 'snail:reset-detection',
+  REVIEW_PROPOSAL: 'snail:review-proposal'
 } as const

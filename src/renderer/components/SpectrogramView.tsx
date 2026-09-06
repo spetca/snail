@@ -4,13 +4,15 @@ import { SpectrogramRenderer, TILE_LINES } from '../webgl/SpectrogramRenderer'
 
 const MAX_CONCURRENT_TILES = 4
 
-export function SpectrogramView(): React.ReactElement {
+export function SpectrogramView({ children }: { children?: React.ReactNode }): React.ReactElement {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rendererRef = useRef<SpectrogramRenderer | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   // Track size as state so changes trigger re-render
   const [viewSize, setViewSize] = useState({ width: 0, height: 0 })
   const generationRef = useRef(0)
+  const [rendererRevision, setRendererRevision] = useState(0)
+  const [renderError, setRenderError] = useState<string | null>(null)
 
   const fileInfo = useStore((s) => s.fileInfo)
   const fftSize = useStore((s) => s.fftSize)
@@ -35,18 +37,32 @@ export function SpectrogramView(): React.ReactElement {
     const canvas = canvasRef.current
     if (!canvas) return
 
+    const lost = (event: Event) => {
+      event.preventDefault()
+      ++generationRef.current
+      setLoading(false)
+      setRenderError('The graphics context was lost. Waiting for recovery; you can also retry below.')
+    }
+    const restored = () => setRendererRevision(revision => revision + 1)
+    canvas.addEventListener('webglcontextlost', lost)
+    canvas.addEventListener('webglcontextrestored', restored)
     try {
       const renderer = new SpectrogramRenderer(canvas)
       rendererRef.current = renderer
+      renderer.resize(canvas.width, canvas.height)
+      setRenderError(null)
     } catch (e) {
-      console.error('Failed to init WebGL renderer:', e)
+      setRenderError(`Cannot initialize the spectrogram: ${String(e)}`)
     }
 
     return () => {
+      ++generationRef.current
+      canvas.removeEventListener('webglcontextlost', lost)
+      canvas.removeEventListener('webglcontextrestored', restored)
       rendererRef.current?.dispose()
       rendererRef.current = null
     }
-  }, [])
+  }, [rendererRevision])
 
   // Resize canvas to match container
   useEffect(() => {
@@ -72,7 +88,10 @@ export function SpectrogramView(): React.ReactElement {
     return () => observer.disconnect()
   }, [])
 
-  // Reset on new file: clear old tiles and fit to viewport
+  // Reset on new file: clear old tiles so stale GPU data isn't shown
+  // Do NOT auto-fit zoom/scroll here — store.setFileInfo already sets the
+  // initial position. Auto-fitting the whole file causes random mmap reads
+  // spread across large files (page-fault storm) and visible hangs.
   const fittedFileRef = useRef<string | null>(null)
   const initialLoadRef = useRef(false)
   useEffect(() => {
@@ -83,9 +102,6 @@ export function SpectrogramView(): React.ReactElement {
     initialLoadRef.current = true
     rendererRef.current?.clearTiles()
     generationRef.current++
-    const fillZoom = fftSize * viewSize.width / fileInfo.totalSamples
-    setZoomLevel(Math.min(fftSize, fillZoom))
-    setScrollOffset(0)
   }, [fileInfo, viewSize.width])
 
   // Render spectrogram
@@ -145,6 +161,7 @@ export function SpectrogramView(): React.ReactElement {
         const batch = needed.slice(i, i + MAX_CONCURRENT_TILES)
         await Promise.all(batch.map(({ tileKey, tileSampleStart }) =>
           window.snailAPI.computeFFTTile({
+            recordingId: fileInfo.recordingId,
             startSample: tileSampleStart,
             fftSize,
             stride
@@ -166,18 +183,21 @@ export function SpectrogramView(): React.ReactElement {
             if (data.length > 0) {
               renderer.uploadTile(tileKey, data, fftSize)
             }
-          }).catch(() => { })
+          }).catch((error) => {
+            if (generationRef.current === generation) setRenderError(`Could not load spectrogram samples: ${String(error)}`)
+          })
         ))
 
         if (generationRef.current === generation) {
           renderer.render(renderParams)
         }
       }
-      if (initialLoadRef.current) { initialLoadRef.current = false; setLoading(false) }
+      if (generationRef.current === generation && initialLoadRef.current) { initialLoadRef.current = false; setLoading(false) }
     }
 
     loadTiles()
-  }, [fileInfo, fftSize, stride, powerMin, powerMax, scrollOffset, viewSize, yZoomLevel, yScrollOffset])
+    return () => { ++generationRef.current }
+  }, [fileInfo, fftSize, stride, powerMin, powerMax, scrollOffset, viewSize, yZoomLevel, yScrollOffset, rendererRevision])
 
   // Min zoom: enough to fit all samples in the viewport
   const minZoom = fileInfo && viewSize.width > 0
@@ -245,6 +265,32 @@ export function SpectrogramView(): React.ReactElement {
     }
   }, [fftSize, yZoomLevel, yScrollOffset, setYZoomLevel, setYScrollOffset])
 
+  // Drag-to-scroll (pan) state
+  const dragRef = useRef<{ startX: number; startOffset: number } | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
+
+  const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    if (!fileInfo) return
+    if (e.button !== 0) return
+    e.currentTarget.setPointerCapture(e.pointerId)
+    dragRef.current = { startX: e.clientX, startOffset: scrollOffset }
+    setIsDragging(true)
+  }, [fileInfo, scrollOffset])
+
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    if (!fileInfo || !dragRef.current) return
+    const dx = e.clientX - dragRef.current.startX
+    const delta = Math.round(-dx * stride)
+    const maxOffset = Math.max(0, fileInfo.totalSamples - viewSize.width * stride)
+    setScrollOffset(Math.max(0, Math.min(maxOffset, dragRef.current.startOffset + delta)))
+  }, [fileInfo, stride, viewSize.width, setScrollOffset])
+
+  const handlePointerUp = useCallback((e: React.PointerEvent) => {
+    e.currentTarget.releasePointerCapture(e.pointerId)
+    dragRef.current = null
+    setIsDragging(false)
+  }, [])
+
   const handleWheel = useCallback((e: React.WheelEvent) => {
     if (!fileInfo) return
     e.preventDefault()
@@ -279,13 +325,27 @@ export function SpectrogramView(): React.ReactElement {
   return (
     <div
       ref={containerRef}
+      onWheel={handleWheel}
       style={{ width: '100%', height: '100%', position: 'relative', minHeight: 100 }}
     >
       <canvas
         ref={canvasRef}
-        onWheel={handleWheel}
-        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        style={{
+          position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+          cursor: isDragging ? 'grabbing' : 'grab'
+        }}
       />
+      {children}
+      {renderError && (
+        <div role="alert" style={{ position: 'absolute', inset: 20, zIndex: 30, padding: 16, background: 'var(--bg2)', height: 'fit-content' }}>
+          <p style={{ marginBottom: 12 }}>{renderError}</p>
+          <button onClick={() => setRendererRevision(revision => revision + 1)}>Retry spectrogram</button>
+        </div>
+      )}
     </div>
   )
 }

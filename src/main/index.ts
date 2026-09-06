@@ -1,15 +1,26 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, shell, ipcMain } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
-import { registerIpcHandlers } from './ipc-handlers'
+import { registerIpcHandlers, recordingSession } from './ipc-handlers'
+import { IPC } from '../shared/ipc-channels'
 
-// Linux requires disabling the sandbox due to kernel unprivileged userns restrictions
 if (process.platform === 'linux') {
+  // Disable the renderer sandbox — required on kernels with unprivileged user namespaces disabled
   app.commandLine.appendSwitch('no-sandbox')
+  // Prevent GPU process from crashing when /dev/shm is small (VMs, containers, some distros)
+  app.commandLine.appendSwitch('disable-dev-shm-usage')
+  // Keep GPU compositing off to avoid driver-specific crashes on headless / VM setups
+  app.commandLine.appendSwitch('disable-gpu-compositing')
 }
 
+let mainWindow: BrowserWindow | null = null
+let fftWindow: BrowserWindow | null = null
+let constellationWindow: BrowserWindow | null = null
+let lastFFTData: any = null
+let lastConstellationData: any = null
+
 function createWindow(): void {
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 800,
@@ -27,7 +38,7 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => {
-    mainWindow.show()
+    mainWindow?.show()
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -40,11 +51,141 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+
+  mainWindow.on('closed', () => {
+    mainWindow = null
+    if (fftWindow) fftWindow.close()
+    if (constellationWindow) constellationWindow.close()
+  })
+}
+
+function createFFTWindow(): void {
+  if (fftWindow) {
+    fftWindow.focus()
+    return
+  }
+
+  fftWindow = new BrowserWindow({
+    width: 1000,
+    height: 800,
+    backgroundColor: '#0a0e14',
+    title: 'FFT Analysis',
+    show: false,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  })
+
+  fftWindow.on('ready-to-show', () => {
+    fftWindow?.show()
+  })
+
+  fftWindow.on('closed', () => {
+    fftWindow = null
+  })
+
+  fftWindow.webContents.on('did-finish-load', () => {
+    if (lastFFTData && fftWindow) {
+      setTimeout(() => {
+        fftWindow?.webContents.send(IPC.FFT_WINDOW_UPDATE, lastFFTData)
+      }, 200)
+    }
+  })
+
+  const fftUrl = is.dev && process.env['ELECTRON_RENDERER_URL']
+    ? `${process.env['ELECTRON_RENDERER_URL']}?window=fft`
+    : `file://${join(__dirname, '../renderer/index.html')}?window=fft`
+
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    fftWindow.loadURL(fftUrl)
+  } else {
+    fftWindow.loadFile(join(__dirname, '../renderer/index.html'), { query: { window: 'fft' } })
+  }
+}
+
+function createConstellationWindow(): void {
+  if (constellationWindow) {
+    constellationWindow.focus()
+    return
+  }
+
+  constellationWindow = new BrowserWindow({
+    width: 900,
+    height: 900,
+    backgroundColor: '#0a0e14',
+    title: 'Constellation Analysis',
+    show: false,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  })
+
+  constellationWindow.on('ready-to-show', () => {
+    constellationWindow?.show()
+  })
+
+  constellationWindow.on('closed', () => {
+    constellationWindow = null
+  })
+
+  constellationWindow.webContents.on('did-finish-load', () => {
+    if (lastConstellationData && constellationWindow) {
+      setTimeout(() => {
+        constellationWindow?.webContents.send(IPC.CONSTELLATION_WINDOW_UPDATE, lastConstellationData)
+      }, 200)
+    }
+  })
+
+  const constUrl = is.dev && process.env['ELECTRON_RENDERER_URL']
+    ? `${process.env['ELECTRON_RENDERER_URL']}?window=constellation`
+    : `file://${join(__dirname, '../renderer/index.html')}?window=constellation`
+
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    constellationWindow.loadURL(constUrl)
+  } else {
+    constellationWindow.loadFile(join(__dirname, '../renderer/index.html'), { query: { window: 'constellation' } })
+  }
 }
 
 app.whenReady().then(() => {
-  registerIpcHandlers()
+  registerIpcHandlers(() => {
+    lastFFTData = null
+    lastConstellationData = null
+    // Close analysis windows to discard their old selection and local DSP state.
+    fftWindow?.close()
+    constellationWindow?.close()
+  })
   createWindow()
+
+  ipcMain.on(IPC.OPEN_FFT_WINDOW, () => {
+    createFFTWindow()
+  })
+
+  ipcMain.on(IPC.FFT_WINDOW_UPDATE, (_event: any, data: any) => {
+    if (data && !recordingSession.isCurrent(data.recordingId)) return
+    lastFFTData = data
+    if (fftWindow) {
+      fftWindow.webContents.send(IPC.FFT_WINDOW_UPDATE, data)
+    }
+  })
+
+  ipcMain.on(IPC.OPEN_CONSTELLATION_WINDOW, () => {
+    createConstellationWindow()
+  })
+
+  ipcMain.on(IPC.CONSTELLATION_WINDOW_UPDATE, (_event: any, data: any) => {
+    if (data && !recordingSession.isCurrent(data.recordingId)) return
+    lastConstellationData = data
+    if (constellationWindow) {
+      constellationWindow.webContents.send(IPC.CONSTELLATION_WINDOW_UPDATE, data)
+    }
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

@@ -99,10 +99,13 @@ public:
     InputSource();
     ~InputSource();
 
-    void open(const std::string& path, const std::string& format = "");
+    // viewStart/viewLength limit which samples are visible (0 = use full file)
+    void open(const std::string& path, const std::string& format = "",
+              size_t viewStart = 0, size_t viewLength = 0);
     void close();
 
     size_t totalSamples() const { return totalSamples_; }
+    size_t fullFileSamples() const { return fullFileSamples_; }
     size_t fileSize() const { return fileSize_; }
     const std::string& format() const { return format_; }
     double sampleRate() const { return sampleRate_; }
@@ -121,7 +124,9 @@ private:
     std::unique_ptr<SampleAdapter> adapter_;
     void* mmapData_ = nullptr;
     size_t fileSize_ = 0;
+    size_t fullFileSamples_ = 0;
     size_t totalSamples_ = 0;
+    size_t viewOffset_ = 0;
     int fd_ = -1;
     std::string format_;
     double sampleRate_ = 1000000.0;

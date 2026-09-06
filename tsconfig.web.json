@@ -11,12 +11,17 @@
     "strict": true,
     "skipLibCheck": true,
     "paths": {
-      "@/*": ["./src/renderer/*"]
-    }
+      "@/*": [
+        "./src/renderer/*"
+      ]
+    },
+    "target": "ES2022",
+    "resolveJsonModule": true
   },
   "include": [
     "src/renderer/**/*.ts",
     "src/renderer/**/*.tsx",
-    "src/shared/**/*.ts"
+    "src/shared/**/*.ts",
+    "package.json"
   ]
 }

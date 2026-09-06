@@ -1,3 +1,5 @@
+import { centerFrequencyAt, splitAnnotation } from '../../shared/sigmf'
+import { recordingJob } from '../utils/recording'
 import React, { useState } from 'react'
 import { useStore } from '../state/store'
 
@@ -11,6 +13,8 @@ export function ExportDialog({ onClose }: ExportDialogProps): React.ReactElement
   const sampleRate = useStore((s) => s.sampleRate)
   const fftSize = useStore((s) => s.fftSize)
   const zoomLevel = useStore((s) => s.zoomLevel)
+  const selection = useStore((s) => s.selection)
+  const scrollOffset = useStore((s) => s.scrollOffset)
   const pendingExport = useStore((s) => s.pendingExport)
   const setPendingExport = useStore((s) => s.setPendingExport)
 
@@ -22,38 +26,50 @@ export function ExportDialog({ onClose }: ExportDialogProps): React.ReactElement
 
   if (!fileInfo) return <></>
 
-  const scrollOffset = useStore((s) => s.scrollOffset)
-  const samplesPerPixel = fftSize / zoomLevel
+  const samplesPerPixel = Math.max(1, Math.round(fftSize / zoomLevel))
   const startSample = pendingExport ? pendingExport.start : Math.round(Math.min(cursors.x1, cursors.x2) * samplesPerPixel) + scrollOffset
   const endSample = pendingExport ? pendingExport.end : Math.round(Math.max(cursors.x1, cursors.x2) * samplesPerPixel) + scrollOffset
   const isTargetedExport = !!pendingExport
 
   const handleExport = async () => {
+    const job = recordingJob(fileInfo.recordingId)
     try {
       setExporting(true)
       setError(null)
 
+      const exportStart = (cursors.enabled || isTargetedExport) ? startSample : 0
+      const exportEnd = (cursors.enabled || isTargetedExport) ? endSample : fileInfo.totalSamples
+      if (exportEnd <= exportStart || exportStart < 0 || exportEnd > fileInfo.totalSamples) throw new Error('Select a nonempty range inside the recording')
+      const parts = splitAnnotation({ sampleStart: exportStart, sampleCount: exportEnd - exportStart }, fileInfo)
+      if (new Set(parts.map(part => part.centerFrequency)).size > 1) throw new Error('This range spans a frequency retune. Export one capture segment at a time.')
+      const useBandpass = !isTargetedExport && applyBandpass
+      if (useBandpass && (!selection || selection.frequency1 === selection.frequency2)) throw new Error('Select a nonzero frequency range for filtering')
       let defaultName = fileInfo.path.replace(/\.[^.]+$/, '_export')
       if (pendingExport?.label) {
         defaultName = pendingExport.label.toLowerCase().replace(/\s+/g, '_')
       }
       const basePath = await window.snailAPI.showSaveDialog(defaultName)
+      if (!job.isCurrent()) return
       if (!basePath) {
         setExporting(false)
         return
       }
 
       const result = await window.snailAPI.exportSigMF({
+            recordingId: fileInfo.recordingId,
         outputPath: basePath,
-        startSample: (cursors.enabled || isTargetedExport) ? startSample : 0,
-        endSample: (cursors.enabled || isTargetedExport) ? endSample : fileInfo.totalSamples,
+        startSample: exportStart,
+        endSample: exportEnd,
         description,
         author,
-        applyBandpass: isTargetedExport ? false : applyBandpass,
+        applyBandpass: useBandpass,
+        bandpassLow: selection ? Math.min(selection.frequency1, selection.frequency2) : undefined,
+        bandpassHigh: selection ? Math.max(selection.frequency1, selection.frequency2) : undefined,
         sampleRate,
-        centerFrequency: fileInfo.centerFrequency
+        centerFrequency: centerFrequencyAt(fileInfo, exportStart)
       })
 
+      if (!job.isCurrent()) return
       if (result.success) {
         setPendingExport(null)
         onClose()

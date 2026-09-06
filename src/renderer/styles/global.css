@@ -39,13 +39,12 @@ html, body, #root {
 /* macOS title bar drag region */
 .titlebar-drag {
   -webkit-app-region: drag;
-  height: 38px;
-  position: fixed;
+  height: 42px;
+  position: absolute;
   top: 0;
   left: 0;
   right: 0;
-  z-index: 100;
-  pointer-events: none;
+  z-index: 0;
 }
 
 /* Dark scrollbars */

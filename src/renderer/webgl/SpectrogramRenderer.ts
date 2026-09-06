@@ -103,10 +103,14 @@ export class SpectrogramRenderer {
     gl.linkProgram(this.program)
 
     if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) {
-      console.error('Shader link failed:', gl.getProgramInfoLog(this.program))
-      return
+      const message = gl.getProgramInfoLog(this.program)
+      gl.deleteProgram(this.program)
+      this.program = null
+      throw new Error(`Shader link failed: ${message}`)
     }
 
+    gl.deleteShader(vert)
+    gl.deleteShader(frag)
     gl.useProgram(this.program)
 
     this.aPos = gl.getAttribLocation(this.program, 'a_position')
@@ -140,7 +144,9 @@ export class SpectrogramRenderer {
     gl.shaderSource(shader, source)
     gl.compileShader(shader)
     if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-      console.error('Shader compile failed:', gl.getShaderInfoLog(shader))
+      const message = gl.getShaderInfoLog(shader)
+      gl.deleteShader(shader)
+      throw new Error(`Shader compile failed: ${message}`)
     }
     return shader
   }
@@ -272,5 +278,7 @@ export class SpectrogramRenderer {
     this.tileCache.clear()
     if (this.colormapTexture) this.gl.deleteTexture(this.colormapTexture)
     if (this.program) this.gl.deleteProgram(this.program)
+    if (this.posBuffer) this.gl.deleteBuffer(this.posBuffer)
+    if (this.texBuffer) this.gl.deleteBuffer(this.texBuffer)
   }
 }

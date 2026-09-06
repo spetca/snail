@@ -1,3 +1,4 @@
+import { recordingJob } from '../utils/recording'
 import { useCallback } from 'react'
 import { useStore } from '../state/store'
 import type { SampleFormat } from '../../shared/sample-formats'
@@ -14,20 +15,23 @@ export function useCorrelation() {
     secondFilePath: string,
     format?: SampleFormat
   ) => {
+    const job = recordingJob()
     try {
       setCorrelationLoading(true)
       const result = await window.snailAPI.correlate({
-        templateStart,
-        templateLength,
-        secondFilePath,
-        secondFileFormat: format
+        recordingId: job.recordingId,
+        mode: 'file',
+        windowStart: templateStart,
+        windowLength: templateLength,
+        patternFilePath: secondFilePath,
+        patternFileFormat: format
       })
-      setCorrelationData(result)
+      if (job.isCurrent()) setCorrelationData(result)
     } catch (err) {
       console.error('Correlation failed:', err)
       throw err
     } finally {
-      setCorrelationLoading(false)
+      if (job.isCurrent()) setCorrelationLoading(false)
     }
   }, [setCorrelationData, setCorrelationLoading])
 

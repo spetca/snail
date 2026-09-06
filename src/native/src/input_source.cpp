@@ -159,9 +159,12 @@ void InputSource::close() {
     }
     fileSize_ = 0;
     totalSamples_ = 0;
+    fullFileSamples_ = 0;
+    viewOffset_ = 0;
 }
 
-void InputSource::open(const std::string& path, const std::string& overrideFormat) {
+void InputSource::open(const std::string& path, const std::string& overrideFormat,
+                       size_t viewStart, size_t viewLength) {
     close();
 
     // Detect format from extension or override
@@ -199,7 +202,7 @@ void InputSource::open(const std::string& path, const std::string& overrideForma
     }
 
     fileSize_ = st.st_size;
-    totalSamples_ = fileSize_ / adapter_->sampleSize();
+    fullFileSamples_ = fileSize_ / adapter_->sampleSize();
 
     mmapData_ = mmap(nullptr, fileSize_, PROT_READ, MAP_PRIVATE, fd_, 0);
     if (mmapData_ == MAP_FAILED) {
@@ -208,21 +211,29 @@ void InputSource::open(const std::string& path, const std::string& overrideForma
         fd_ = -1;
         throw std::runtime_error("Failed to mmap file: " + dataPath);
     }
+
+    // Apply view window
+    if (viewStart > 0 || viewLength > 0) {
+        viewOffset_ = (viewStart < fullFileSamples_) ? viewStart : 0;
+        size_t remaining = fullFileSamples_ - viewOffset_;
+        totalSamples_ = (viewLength > 0 && viewLength < remaining) ? viewLength : remaining;
+    } else {
+        viewOffset_ = 0;
+        totalSamples_ = fullFileSamples_;
+    }
 }
 
 void InputSource::getSamples(size_t start, size_t length, std::complex<float>* dest) const {
     if (!mmapData_ || !adapter_) {
         throw std::runtime_error("No file open");
     }
-    size_t end = start + length;
     size_t actualLength = length;
-    if (end > totalSamples_) {
+    if (start + length > totalSamples_) {
         actualLength = (start < totalSamples_) ? totalSamples_ - start : 0;
     }
     if (actualLength > 0) {
-        adapter_->copyRange(mmapData_, start, actualLength, dest);
+        adapter_->copyRange(mmapData_, viewOffset_ + start, actualLength, dest);
     }
-    // Zero-fill any remaining samples beyond the file
     for (size_t i = actualLength; i < length; i++) {
         dest[i] = std::complex<float>(0.0f, 0.0f);
     }
@@ -242,7 +253,7 @@ void InputSource::getSamplesStrided(size_t start, size_t length, size_t stride, 
     for (size_t i = 0; i < length; i++) {
         size_t srcIdx = start + i * stride;
         if (srcIdx < totalSamples_) {
-            adapter_->copyRange(mmapData_, srcIdx, 1, &dest[i]);
+            adapter_->copyRange(mmapData_, viewOffset_ + srcIdx, 1, &dest[i]);
         } else {
             dest[i] = std::complex<float>(0.0f, 0.0f);
         }
@@ -353,7 +364,7 @@ void InputSource::getSamplesDetected(size_t start, size_t length, size_t stride,
 
     for (size_t i = 0; i < length; i++) {
         size_t blockStart = start + i * stride;
-        
+
         if (blockStart >= totalSamples_) {
             dest[i] = std::complex<float>(0.0f, 0.0f);
             continue;
@@ -364,7 +375,7 @@ void InputSource::getSamplesDetected(size_t start, size_t length, size_t stride,
             blockLen = totalSamples_ - blockStart;
         }
 
-        adapter_->copyRange(mmapData_, blockStart, blockLen, buffer.data());
+        adapter_->copyRange(mmapData_, viewOffset_ + blockStart, blockLen, buffer.data());
 
         float maxMag = -1.0f;
         std::complex<float> maxSample(0.0f, 0.0f);
