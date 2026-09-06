@@ -1,7 +1,7 @@
 import { app, BrowserWindow, shell, ipcMain } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
-import { registerIpcHandlers } from './ipc-handlers'
+import { registerIpcHandlers, recordingSession } from './ipc-handlers'
 import { IPC } from '../shared/ipc-channels'
 
 if (process.platform === 'linux') {
@@ -154,7 +154,13 @@ function createConstellationWindow(): void {
 }
 
 app.whenReady().then(() => {
-  registerIpcHandlers()
+  registerIpcHandlers(() => {
+    lastFFTData = null
+    lastConstellationData = null
+    // Close analysis windows to discard their old selection and local DSP state.
+    fftWindow?.close()
+    constellationWindow?.close()
+  })
   createWindow()
 
   ipcMain.on(IPC.OPEN_FFT_WINDOW, () => {
@@ -162,6 +168,7 @@ app.whenReady().then(() => {
   })
 
   ipcMain.on(IPC.FFT_WINDOW_UPDATE, (_event: any, data: any) => {
+    if (data && !recordingSession.isCurrent(data.recordingId)) return
     lastFFTData = data
     if (fftWindow) {
       fftWindow.webContents.send(IPC.FFT_WINDOW_UPDATE, data)
@@ -173,6 +180,7 @@ app.whenReady().then(() => {
   })
 
   ipcMain.on(IPC.CONSTELLATION_WINDOW_UPDATE, (_event: any, data: any) => {
+    if (data && !recordingSession.isCurrent(data.recordingId)) return
     lastConstellationData = data
     if (constellationWindow) {
       constellationWindow.webContents.send(IPC.CONSTELLATION_WINDOW_UPDATE, data)

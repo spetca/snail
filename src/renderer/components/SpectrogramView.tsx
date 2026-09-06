@@ -4,13 +4,15 @@ import { SpectrogramRenderer, TILE_LINES } from '../webgl/SpectrogramRenderer'
 
 const MAX_CONCURRENT_TILES = 4
 
-export function SpectrogramView(): React.ReactElement {
+export function SpectrogramView({ children }: { children?: React.ReactNode }): React.ReactElement {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rendererRef = useRef<SpectrogramRenderer | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   // Track size as state so changes trigger re-render
   const [viewSize, setViewSize] = useState({ width: 0, height: 0 })
   const generationRef = useRef(0)
+  const [rendererRevision, setRendererRevision] = useState(0)
+  const [renderError, setRenderError] = useState<string | null>(null)
 
   const fileInfo = useStore((s) => s.fileInfo)
   const fftSize = useStore((s) => s.fftSize)
@@ -35,18 +37,32 @@ export function SpectrogramView(): React.ReactElement {
     const canvas = canvasRef.current
     if (!canvas) return
 
+    const lost = (event: Event) => {
+      event.preventDefault()
+      ++generationRef.current
+      setLoading(false)
+      setRenderError('The graphics context was lost. Waiting for recovery; you can also retry below.')
+    }
+    const restored = () => setRendererRevision(revision => revision + 1)
+    canvas.addEventListener('webglcontextlost', lost)
+    canvas.addEventListener('webglcontextrestored', restored)
     try {
       const renderer = new SpectrogramRenderer(canvas)
       rendererRef.current = renderer
+      renderer.resize(canvas.width, canvas.height)
+      setRenderError(null)
     } catch (e) {
-      console.error('Failed to init WebGL renderer:', e)
+      setRenderError(`Cannot initialize the spectrogram: ${String(e)}`)
     }
 
     return () => {
+      ++generationRef.current
+      canvas.removeEventListener('webglcontextlost', lost)
+      canvas.removeEventListener('webglcontextrestored', restored)
       rendererRef.current?.dispose()
       rendererRef.current = null
     }
-  }, [])
+  }, [rendererRevision])
 
   // Resize canvas to match container
   useEffect(() => {
@@ -145,6 +161,7 @@ export function SpectrogramView(): React.ReactElement {
         const batch = needed.slice(i, i + MAX_CONCURRENT_TILES)
         await Promise.all(batch.map(({ tileKey, tileSampleStart }) =>
           window.snailAPI.computeFFTTile({
+            recordingId: fileInfo.recordingId,
             startSample: tileSampleStart,
             fftSize,
             stride
@@ -166,18 +183,21 @@ export function SpectrogramView(): React.ReactElement {
             if (data.length > 0) {
               renderer.uploadTile(tileKey, data, fftSize)
             }
-          }).catch(() => { })
+          }).catch((error) => {
+            if (generationRef.current === generation) setRenderError(`Could not load spectrogram samples: ${String(error)}`)
+          })
         ))
 
         if (generationRef.current === generation) {
           renderer.render(renderParams)
         }
       }
-      if (initialLoadRef.current) { initialLoadRef.current = false; setLoading(false) }
+      if (generationRef.current === generation && initialLoadRef.current) { initialLoadRef.current = false; setLoading(false) }
     }
 
     loadTiles()
-  }, [fileInfo, fftSize, stride, powerMin, powerMax, scrollOffset, viewSize, yZoomLevel, yScrollOffset])
+    return () => { ++generationRef.current }
+  }, [fileInfo, fftSize, stride, powerMin, powerMax, scrollOffset, viewSize, yZoomLevel, yScrollOffset, rendererRevision])
 
   // Min zoom: enough to fit all samples in the viewport
   const minZoom = fileInfo && viewSize.width > 0
@@ -305,11 +325,11 @@ export function SpectrogramView(): React.ReactElement {
   return (
     <div
       ref={containerRef}
+      onWheel={handleWheel}
       style={{ width: '100%', height: '100%', position: 'relative', minHeight: 100 }}
     >
       <canvas
         ref={canvasRef}
-        onWheel={handleWheel}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -319,6 +339,13 @@ export function SpectrogramView(): React.ReactElement {
           cursor: isDragging ? 'grabbing' : 'grab'
         }}
       />
+      {children}
+      {renderError && (
+        <div role="alert" style={{ position: 'absolute', inset: 20, zIndex: 30, padding: 16, background: 'var(--bg2)', height: 'fit-content' }}>
+          <p style={{ marginBottom: 12 }}>{renderError}</p>
+          <button onClick={() => setRendererRevision(revision => revision + 1)}>Retry spectrogram</button>
+        </div>
+      )}
     </div>
   )
 }

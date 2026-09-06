@@ -1,3 +1,5 @@
+import { formatFrequency } from '../../shared/units'
+import { recordingJob } from '../utils/recording'
 import React, { useState } from 'react'
 import { useStore } from '../state/store'
 import type { SigMFAnnotation } from '../../shared/sample-formats'
@@ -8,6 +10,7 @@ interface AnnotationDialogProps {
 
 export function AnnotationDialog({ onClose }: AnnotationDialogProps): React.ReactElement {
   const fileInfo = useStore((s) => s.fileInfo)
+  const selection = useStore((s) => s.selection)
   const cursors = useStore((s) => s.cursors)
   const sampleRate = useStore((s) => s.sampleRate)
   const fftSize = useStore((s) => s.fftSize)
@@ -16,7 +19,8 @@ export function AnnotationDialog({ onClose }: AnnotationDialogProps): React.Reac
   const viewHeight = useStore((s) => s.viewHeight)
   const yZoomLevel = useStore((s) => s.yZoomLevel)
   const yScrollOffset = useStore((s) => s.yScrollOffset)
-  const addAnnotation = useStore((s) => s.addAnnotation)
+  const setSigmfMetadata = useStore((s) => s.setSigmfMetadata)
+  const frequencyMode = useStore((s) => s.annotationFrequencyMode)
 
   const [label, setLabel] = useState('')
   const [comment, setComment] = useState('')
@@ -32,17 +36,16 @@ export function AnnotationDialog({ onClose }: AnnotationDialogProps): React.Reac
   const sampleEnd = Math.round(Math.max(cursors.x1, cursors.x2) * samplesPerPixel) + scrollOffset
   const sampleCount = sampleEnd - sampleStart
 
-  // Map Y cursor positions to frequencies
-  // Canvas Y=0 is top = +sampleRate/2, Y=height is bottom = -sampleRate/2
-  // We use a reference height — cursors store pixel positions
-  // freq = (0.5 - y/height) * sampleRate, but we don't know height here
-  // So we compute freq bounds as normalized fractions of sampleRate
-  // Actually cursors.y1/y2 are in pixel space relative to the overlay container
-  // We'll compute freq from the cursor Y values normalized against the container
-  const hasFreqBounds = cursors.y1 !== cursors.y2
+  const hasFreqBounds = selection ? selection.frequency1 !== selection.frequency2 : cursors.y1 !== cursors.y2
+  const frequencyUpper = selection ? Math.max(selection.frequency1, selection.frequency2)
+    : (0.5 - yScrollOffset / (fftSize / 2) - Math.min(cursors.y1, cursors.y2) / viewHeight / yZoomLevel) * sampleRate
+  const frequencyLower = selection ? Math.min(selection.frequency1, selection.frequency2)
+    : (0.5 - yScrollOffset / (fftSize / 2) - Math.max(cursors.y1, cursors.y2) / viewHeight / yZoomLevel) * sampleRate
 
   const handleSave = async () => {
+    const job = recordingJob(fileInfo.recordingId)
     if (!label.trim()) return
+    if (sampleCount <= 0 || sampleEnd > fileInfo.totalSamples) { setError('Select a nonempty range inside the recording'); return }
 
     setSaving(true)
     setError(null)
@@ -50,25 +53,13 @@ export function AnnotationDialog({ onClose }: AnnotationDialogProps): React.Reac
     try {
       const annotation: SigMFAnnotation = {
         sampleStart: Math.max(0, sampleStart),
-        sampleCount: Math.max(1, sampleCount)
+        sampleCount
       }
 
       if (hasFreqBounds) {
-        // Y pixel position maps to frequency: freq = (0.5 - y/height) * sampleRate
-        // But we don't have the container height here. The cursor Y values are in pixels.
-        // We need to compute frequency from the cursor positions.
-        // The spectrogram maps: top (y=0) = +sampleRate/2, bottom (y=height) = -sampleRate/2
-        // But cursor y values are relative to a container whose height we'd need.
-        // We can approximate using the same mapping as CursorOverlay's measurements:
-        // freqTop = (0.5 - min(y1,y2) / height) * sampleRate
-        // We'll grab the height from a DOM query
-        // Use viewHeight from store which is the source of truth for the canvas size
-        // Must match CursorOverlay/FrequencyAxis mapping: accounts for Y zoom and scroll
-        const yNormOffset = yScrollOffset / (fftSize / 2)
-        const freqUpper = (0.5 - yNormOffset - Math.min(cursors.y1, cursors.y2) / viewHeight / yZoomLevel) * sampleRate
-        const freqLower = (0.5 - yNormOffset - Math.max(cursors.y1, cursors.y2) / viewHeight / yZoomLevel) * sampleRate
-        annotation.freqLowerEdge = freqLower
-        annotation.freqUpperEdge = freqUpper
+        // The writer converts baseband bounds to RF separately for each capture.
+        annotation.freqLowerEdge = frequencyLower
+        annotation.freqUpperEdge = frequencyUpper
       }
 
       annotation.label = label.trim()
@@ -76,8 +67,9 @@ export function AnnotationDialog({ onClose }: AnnotationDialogProps): React.Reac
         annotation.comment = comment.trim()
       }
 
-      await window.snailAPI.saveAnnotation(fileInfo.path, annotation)
-      addAnnotation(annotation)
+      const result = await window.snailAPI.saveAnnotation(fileInfo.path, annotation, fileInfo.recordingId, frequencyMode, sampleRate)
+      if (!job.isCurrent()) return
+      setSigmfMetadata(result.sigmfMetaJson)
       onClose()
     } catch (err: any) {
       setError(err.message)
@@ -98,13 +90,18 @@ export function AnnotationDialog({ onClose }: AnnotationDialogProps): React.Reac
         </Field>
 
         {hasFreqBounds && (
-          <Field label="Frequency Range">
+          <Field label="Baseband Frequency Range">
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-              Defined by cursor Y positions
+              {formatFrequency(frequencyLower)} to {formatFrequency(frequencyUpper)}
             </span>
           </Field>
         )}
 
+        {frequencyMode === 'legacy-baseband' && (
+          <p style={{ color: 'var(--text-muted)', marginBottom: 12 }}>
+            Saving converts existing annotation frequency bounds from legacy baseband to RF.
+          </p>
+        )}
         <Field label="Label">
           <input
             type="text"

@@ -12,6 +12,8 @@ export function Toolbar({ onExport, onAnnotate, onOpen, onHopTable }: ToolbarPro
   const fileInfo = useStore((s) => s.fileInfo)
   const setError = useStore((s) => s.setError)
   const cursors = useStore((s) => s.cursors)
+  const showDetectionPanel = useStore(s => s.showDetectionPanel)
+  const setShowDetectionPanel = useStore(s => s.setShowDetectionPanel)
   const correlationEnabled = useStore((s) => s.correlationEnabled)
   const setCorrelationEnabled = useStore((s) => s.setCorrelationEnabled)
 
@@ -70,6 +72,9 @@ export function Toolbar({ onExport, onAnnotate, onOpen, onHopTable }: ToolbarPro
             }}
           >
             Correlate{correlationEnabled ? ' ON' : ''}
+          </button>
+          <button onClick={() => setShowDetectionPanel(!showDetectionPanel)} aria-pressed={showDetectionPanel} style={{ WebkitAppRegion: 'no-drag' }}>
+            Detect & label
           </button>
           <button onClick={onHopTable} style={{ WebkitAppRegion: 'no-drag' } as any}>
             Hop Table

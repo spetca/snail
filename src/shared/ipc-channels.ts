@@ -1,4 +1,7 @@
 export const IPC = {
+  EXPORT_DATASET: 'snail:export-dataset',
+  DATASET_STATE: 'snail:dataset-state',
+  CANCEL_DATASET: 'snail:cancel-dataset',
   OPEN_FILE: 'snail:open-file',
   GET_SAMPLES: 'snail:get-samples',
   COMPUTE_FFT_TILE: 'snail:compute-fft-tile',
@@ -20,5 +23,10 @@ export const IPC = {
   SHOW_OPEN_JSON_DIALOG: 'snail:show-open-json-dialog',
   TRAIN_CLASSIFIER: 'snail:train-classifier',
   PROBE_FILE: 'snail:probe-file',
-  FIND_PULSES: 'snail:find-pulses'
+  FIND_PULSES: 'snail:find-pulses',
+  DETECTION_STATE: 'snail:detection-state',
+  START_DETECTION: 'snail:start-detection',
+  CANCEL_DETECTION: 'snail:cancel-detection',
+  RESET_DETECTION: 'snail:reset-detection',
+  REVIEW_PROPOSAL: 'snail:review-proposal'
 } as const

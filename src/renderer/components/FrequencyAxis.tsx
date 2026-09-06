@@ -1,3 +1,4 @@
+import { centerFrequencyAt } from '../../shared/sigmf'
 import React, { useRef, useEffect } from 'react'
 import { useStore } from '../state/store'
 import { formatFrequency } from '../../shared/units'
@@ -13,7 +14,9 @@ export function FrequencyAxis(): React.ReactElement {
   const yZoomLevel = useStore((s) => s.yZoomLevel)
   const yScrollOffset = useStore((s) => s.yScrollOffset)
   const showAbsoluteFrequency = useStore((s) => s.showAbsoluteFrequency)
-  const centerFrequency = useStore((s) => s.fileInfo?.centerFrequency ?? 0)
+  const fileInfo = useStore((s) => s.fileInfo)
+  const scrollOffset = useStore((s) => s.scrollOffset)
+  const centerFrequency = centerFrequencyAt(fileInfo, scrollOffset)
 
   useEffect(() => {
     const canvas = canvasRef.current

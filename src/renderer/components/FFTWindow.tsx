@@ -1,3 +1,4 @@
+import type { AnalysisSelection } from '../../shared/sample-formats'
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { useStore } from '../state/store'
 import { formatFrequency } from '../../shared/units'
@@ -14,7 +15,7 @@ export function FFTWindow(): React.ReactElement | null {
     const setFFTCursorV = useStore((s) => s.setFFTCursorV)
     const setFFTCursorH = useStore((s) => s.setFFTCursorH)
 
-    const [cursorRange, setCursorRange] = useState<{ start: number, length: number, fs: number } | null>(null)
+    const [cursorRange, setCursorRange] = useState<AnalysisSelection | null>(null)
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const [dragTarget, setDragTarget] = useState<'v1' | 'v2' | 'h1' | 'h2' | null>(null)
 
@@ -23,14 +24,17 @@ export function FFTWindow(): React.ReactElement | null {
     // Listen for updates from main window
     useEffect(() => {
         return window.snailAPI.onFFTUpdate((data: any) => {
+            setFFTResult(null)
             setCursorRange(data)
         })
     }, [])
 
     useEffect(() => {
+        let cancelled = false
         if (cursorRange) {
             const fs = fftSettings.fs || cursorRange.fs || sampleRate
             window.snailAPI.computeFFT({
+                recordingId: cursorRange.recordingId,
                 startSample: cursorRange.start,
                 length: cursorRange.length,
                 fftSize: fftSettings.fftSize,
@@ -38,8 +42,9 @@ export function FFTWindow(): React.ReactElement | null {
                 shift: fftSettings.shift,
                 scale: fftSettings.scale,
                 sampleRate: fs
-            }).then(setFFTResult).catch(console.error)
+            }).then((result) => { if (!cancelled) setFFTResult(result) }).catch(console.error)
         }
+        return () => { cancelled = true }
     }, [
         cursorRange,
         fftSettings.fftSize,

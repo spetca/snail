@@ -7,3 +7,10 @@ declare global {
     snailAPI: SnailAPI
   }
 }
+
+// Electron's draggable window regions extend standard CSS.
+declare module 'react' {
+  interface CSSProperties {
+    WebkitAppRegion?: 'drag' | 'no-drag'
+  }
+}

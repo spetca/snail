@@ -6,6 +6,7 @@ const MARGIN = { top: 8, right: 8, bottom: 24, left: 46 }
 const AVG_ALPHA = 0.15 // EMA weight for average hold
 
 export function RealtimeSpectrum(): React.ReactElement | null {
+  const fileInfo = useStore((s) => s.fileInfo)
   const playheadSample = useStore((s) => s.playheadSample)
   const isPlaying = useStore((s) => s.isPlaying)
   const sampleRate = useStore((s) => s.sampleRate)
@@ -162,7 +163,7 @@ export function RealtimeSpectrum(): React.ReactElement | null {
       draw(lastDataRef.current)
       return
     }
-    if (!isPlaying) return
+    if (!isPlaying || !fileInfo) return
 
     const threshold = fftSize / 2
     if (Math.abs(playheadSample - lastComputedSampleRef.current) < threshold) return
@@ -172,6 +173,7 @@ export function RealtimeSpectrum(): React.ReactElement | null {
     pendingRef.current = true
 
     window.snailAPI.computeFFT({
+      recordingId: fileInfo.recordingId,
       startSample: playheadSample,
       length: fftSize,
       fftSize,
@@ -212,7 +214,7 @@ export function RealtimeSpectrum(): React.ReactElement | null {
 
       draw(data)
     }).catch(() => { pendingRef.current = false })
-  }, [playheadSample, isPlaying, fftSize, fftSettings, sampleRate, realtimeSpectrumMode, draw])
+  }, [fileInfo, playheadSample, isPlaying, fftSize, fftSettings, sampleRate, realtimeSpectrumMode, draw])
 
   // Redraw when mode changes (to switch which trace is primary)
   useEffect(() => {

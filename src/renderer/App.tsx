@@ -1,4 +1,7 @@
-import React, { useCallback, useState } from 'react'
+import { useDetection } from './hooks/useDetection'
+import { DetectionPanel } from './components/DetectionPanel'
+import { openRecording } from './utils/recording'
+import React, { useCallback, useState, useEffect, useRef } from 'react'
 import { useStore } from './state/store'
 import { Toolbar } from './components/Toolbar'
 import { ControlsPanel } from './components/ControlsPanel'
@@ -30,15 +33,12 @@ export default function App(): React.ReactElement {
 
 function MainApp(): React.ReactElement {
   const fileInfo = useStore((s) => s.fileInfo)
-  const setFileInfo = useStore((s) => s.setFileInfo)
-  const setLoading = useStore((s) => s.setLoading)
-  const setError = useStore((s) => s.setError)
   const loading = useStore((s) => s.loading)
-  const correlationEnabled = useStore((s) => s.correlationEnabled)
   const scrollOffset = useStore((s) => s.scrollOffset)
   const setScrollOffset = useStore((s) => s.setScrollOffset)
   const fftSize = useStore((s) => s.fftSize)
   const zoomLevel = useStore((s) => s.zoomLevel)
+  const viewWidth = useStore((s) => s.viewWidth)
   const yZoomLevel = useStore((s) => s.yZoomLevel)
   const yScrollOffset = useStore((s) => s.yScrollOffset)
   const setYScrollOffset = useStore((s) => s.setYScrollOffset)
@@ -48,45 +48,31 @@ function MainApp(): React.ReactElement {
   const setShowAnnotation = useStore((s) => s.setShowAnnotationDialog)
   const [showHopTable, setShowHopTable] = useState(false)
 
+  const showDetectionPanel = useStore(s => s.showDetectionPanel)
   usePlayback()
+  useDetection()
 
   const [pendingImport, setPendingImport] = useState<{ filePath: string; probe: ProbeResult } | null>(null)
 
+  const probeGeneration = useRef(0)
   const openWithProbe = useCallback(async (filePath: string) => {
+    const generation = ++probeGeneration.current
     try {
       const probe = await window.snailAPI.probeFile(filePath)
-      setPendingImport({ filePath, probe })
-    } catch (err: any) {
-      // If probe fails (e.g., file not stat-able), fall back to direct open
-      try {
-        setLoading(true)
-        const info = await window.snailAPI.openFile(filePath)
-        setFileInfo(info)
-      } catch (e: any) {
-        setError(e.message)
-      } finally {
-        setLoading(false)
-      }
+      if (generation === probeGeneration.current) setPendingImport({ filePath, probe })
+    } catch {
+      if (generation === probeGeneration.current) await openRecording(filePath)
     }
-  }, [setFileInfo, setLoading, setError])
+  }, [])
 
   const handleImportConfirm = useCallback(async (viewStart: number, _viewLength: number) => {
     if (!pendingImport) return
     const { filePath } = pendingImport
     setPendingImport(null)
-    try {
-      setLoading(true)
-      // Always open the full file — same as inspectrum's mmap approach.
-      // totalSamples = entire file; the user can scroll anywhere.
-      // Start at zoom=1 (inspectrum default) positioned at the selected start.
-      const info = await window.snailAPI.openFile(filePath)
-      setFileInfo(info, viewStart > 0 ? viewStart : 0)
-    } catch (err: any) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
-  }, [pendingImport, setFileInfo, setLoading, setError])
+    await openRecording(filePath, undefined, Math.max(0, viewStart))
+  }, [pendingImport])
+
+  useEffect(() => { setShowHopTable(false) }, [fileInfo?.recordingId])
 
   const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault()
@@ -102,8 +88,8 @@ function MainApp(): React.ReactElement {
 
   // Compute scrollbar parameters
   const totalSamples = fileInfo?.totalSamples ?? 0
-  const stride = fftSize / zoomLevel
-  const xViewportSamples = 800 * stride
+  const stride = Math.max(1, Math.round(fftSize / zoomLevel))
+  const xViewportSamples = viewWidth * stride
   const totalFreqBins = fftSize / 2
   const visibleFreqBins = totalFreqBins / yZoomLevel
 
@@ -120,7 +106,7 @@ function MainApp(): React.ReactElement {
       <Toolbar onExport={() => setShowExport(true)} onAnnotate={() => setShowAnnotation(true)} onOpen={openWithProbe} onHopTable={() => setShowHopTable(true)} />
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        <ControlsPanel />
+        <ControlsPanel key={fileInfo?.recordingId ?? 'empty'} />
 
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
           {loading && (
@@ -144,12 +130,13 @@ function MainApp(): React.ReactElement {
             </div>
           )}
           {fileInfo ? (
-            <>
+            <React.Fragment key={fileInfo.recordingId}>
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                 <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
                   <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-                    <SpectrogramView />
-                    <CursorOverlay />
+                    <SpectrogramView>
+                      <CursorOverlay />
+                    </SpectrogramView>
                   </div>
                   {yZoomLevel > 1 && (
                     <ScrollBar
@@ -175,7 +162,7 @@ function MainApp(): React.ReactElement {
               <RealtimeSpectrum />
               <TracePlot />
               <CorrelationPane />
-            </>
+            </React.Fragment>
           ) : (
             <div
               onDrop={handleDrop}
@@ -204,13 +191,14 @@ function MainApp(): React.ReactElement {
             </div>
           )}
         </div>
+        {fileInfo && showDetectionPanel && <DetectionPanel key={fileInfo.recordingId} />}
       </div>
 
       <StatusBar />
 
       {showExport && <ExportDialog onClose={() => setShowExport(false)} />}
       {showAnnotation && <AnnotationDialog onClose={() => setShowAnnotation(false)} />}
-      {showHopTable && <FrequencyHopTableBuilder onClose={() => setShowHopTable(false)} />}
+      {showHopTable && <FrequencyHopTableBuilder key={fileInfo?.recordingId} onClose={() => setShowHopTable(false)} />}
       {pendingImport && (
         <PartialImportDialog
           filePath={pendingImport.filePath}

@@ -34,7 +34,7 @@ export function usePlayback(): void {
     }
   })
 
-  const rafRef = useRef<number>()
+  const rafRef = useRef<number | undefined>(undefined)
   const lastTimestampRef = useRef<number | null>(null)
   const playheadRef = useRef<number>(0)
 

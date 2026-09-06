@@ -21,6 +21,8 @@ export interface SigMFAnnotation {
 }
 
 export interface FileInfo {
+  /** Unique to this open operation, including reopens of the same path. */
+  recordingId: string
   path: string
   format: SampleFormat
   sampleRate: number
@@ -41,12 +43,14 @@ export interface ProbeResult {
 }
 
 export interface FFTTileRequest {
+  recordingId: string
   startSample: number
   fftSize: number
   stride: number
 }
 
 export interface ExportConfig {
+  recordingId: string
   outputPath: string
   startSample: number
   endSample: number
@@ -60,6 +64,7 @@ export interface ExportConfig {
 }
 
 export interface CorrelateRequest {
+  recordingId: string
   mode: 'file' | 'self'
   windowStart: number
   windowLength: number
@@ -72,6 +77,7 @@ export interface CorrelateRequest {
 }
 
 export interface FFTConfigRequest {
+  recordingId: string
   startSample: number
   length: number
   fftSize: number
@@ -108,6 +114,7 @@ export interface PulseRecord {
 }
 
 export interface PulseFindRequest {
+  recordingId: string
   targetWidthSecs: number
   widthTolSecs: number
   targetOBWHz: number
@@ -152,4 +159,11 @@ export const SAMPLE_BYTE_SIZES: Record<SampleFormat, number> = {
   rs16: 2,
   rs8: 1,
   ru8: 1
+}
+
+export interface AnalysisSelection {
+  recordingId: string
+  start: number
+  length: number
+  fs: number
 }

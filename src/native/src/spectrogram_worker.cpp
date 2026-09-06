@@ -7,16 +7,18 @@ static const int TILE_LINES = 256;
 SpectrogramWorker::SpectrogramWorker(
     Napi::Env env,
     Napi::Promise::Deferred deferred,
-    InputSource& source,
+    std::shared_ptr<const InputSource> source,
     size_t startSample,
     int fftSize,
-    int stride
+    int stride,
+    size_t endSample
 ) : Napi::AsyncWorker(env),
     deferred_(deferred),
     source_(source),
     startSample_(startSample),
     fftSize_(fftSize),
-    stride_(stride) {}
+    stride_(stride),
+    endSample_(endSample) {}
 
 void SpectrogramWorker::Execute() {
     FFTEngine fft(fftSize_);
@@ -27,11 +29,11 @@ void SpectrogramWorker::Execute() {
     // Compute lines for all samples, including partial windows at the end
     // (getSamples zero-pads beyond the file boundary)
     size_t maxLines = 0;
-    size_t total = source_.totalSamples();
+    size_t total = std::min(source_->totalSamples(), endSample_);
     if (startSample_ < total) {
         maxLines = (total - startSample_ - 1) / stride + 1;
     }
-    numLines = std::min(numLines, static_cast<int>(maxLines));
+    numLines = static_cast<int>(std::min(static_cast<size_t>(numLines), maxLines));
     if (numLines <= 0) {
         SetError("No samples available for tile");
         return;
@@ -44,7 +46,8 @@ void SpectrogramWorker::Execute() {
 
     for (int line = 0; line < numLines; line++) {
         size_t sampleOffset = startSample_ + line * stride;
-        source_.getSamples(sampleOffset, fftSize_, sampleBuf.data());
+        std::fill(sampleBuf.begin(), sampleBuf.end(), std::complex<float>(0, 0));
+        source_->getSamples(sampleOffset, std::min(static_cast<size_t>(fftSize_), total - sampleOffset), sampleBuf.data());
 
         // Compute power spectrum for this line
         fft.computePowerSpectrum(sampleBuf.data(), result_.data() + line * fftSize_);

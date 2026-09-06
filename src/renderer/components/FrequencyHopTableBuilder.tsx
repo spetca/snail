@@ -263,6 +263,7 @@ export function FrequencyHopTableBuilder({ onClose }: Props): React.ReactElement
     const t0 = performance.now()
     try {
       const result = await window.snailAPI.findPulses({
+            recordingId: fileInfo.recordingId,
         targetWidthSecs: pw * 1e-6,
         widthTolSecs:    pwt * 1e-6,
         targetOBWHz:     obw * 1e6,

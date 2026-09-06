@@ -1,3 +1,4 @@
+import { recordingJob } from '../utils/recording'
 import React, { useRef, useEffect, useCallback } from 'react'
 import { useStore } from '../state/store'
 import type { SampleFormat } from '../../shared/sample-formats'
@@ -18,6 +19,7 @@ export function CorrelationPane(): React.ReactElement {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const computeGenRef = useRef(0)
 
+  const fileInfo = useStore((s) => s.fileInfo)
   const correlationEnabled = useStore((s) => s.correlationEnabled)
   const correlationMode = useStore((s) => s.correlationMode)
   const correlationFilePath = useStore((s) => s.correlationFilePath)
@@ -76,7 +78,7 @@ export function CorrelationPane(): React.ReactElement {
   }
 
   // Compute search window from X cursors
-  const samplesPerPixel = fftSize / zoomLevel
+  const samplesPerPixel = Math.max(1, Math.round(fftSize / zoomLevel))
   const windowStart = Math.round(
     scrollOffset + Math.min(cursors.x1, cursors.x2) * samplesPerPixel
   )
@@ -86,23 +88,26 @@ export function CorrelationPane(): React.ReactElement {
   )
 
   const handleLoadFile = useCallback(async () => {
+    const job = recordingJob()
     const path = await window.snailAPI.showOpenDialog()
-    if (path) setCorrelationFilePath(path)
+    if (path && job.isCurrent()) setCorrelationFilePath(path)
   }, [setCorrelationFilePath])
 
   // Auto-compute correlation (debounced) when inputs change
   useEffect(() => {
-    if (!correlationEnabled || !cursors.enabled) return
+    const gen = ++computeGenRef.current
+    const job = recordingJob(fileInfo?.recordingId)
+    if (!fileInfo || !correlationEnabled || !cursors.enabled) return
     if (correlationMode === 'file' && !correlationFilePath) return
     if (Math.abs(cursors.x2 - cursors.x1) < 5) return
 
     if (debounceRef.current) clearTimeout(debounceRef.current)
 
     debounceRef.current = setTimeout(async () => {
-      const gen = ++computeGenRef.current
       setCorrelationLoading(true)
       try {
         const result = await window.snailAPI.correlate({
+          recordingId: job.recordingId,
           mode: correlationMode,
           windowStart,
           windowLength,
@@ -111,26 +116,27 @@ export function CorrelationPane(): React.ReactElement {
           tu,
           cpLen
         })
-        if (computeGenRef.current === gen) {
+        if (computeGenRef.current === gen && job.isCurrent()) {
           setCorrelationData(result)
         }
       } catch (err) {
         console.error('Correlation failed:', err)
-        if (computeGenRef.current === gen) {
+        if (computeGenRef.current === gen && job.isCurrent()) {
           setCorrelationData(null)
         }
       } finally {
-        if (computeGenRef.current === gen) {
+        if (computeGenRef.current === gen && job.isCurrent()) {
           setCorrelationLoading(false)
         }
       }
     }, DEBOUNCE_MS)
 
     return () => {
+      ++computeGenRef.current
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
   }, [
-    correlationEnabled, correlationMode, correlationFilePath, correlationFileFormat,
+    fileInfo, correlationEnabled, correlationMode, correlationFilePath, correlationFileFormat,
     cursors.enabled, cursors.x1, cursors.x2,
     windowStart, windowLength, tu, cpLen,
     setCorrelationData, setCorrelationLoading

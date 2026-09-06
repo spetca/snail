@@ -1,3 +1,4 @@
+import { recordingJob } from './recording'
 // Scan stride: sample every Nth file sample to cover large files quickly
 const SCAN_STRIDE = 512
 // Samples fetched per IPC call (covers SCAN_CHUNK * SCAN_STRIDE file samples)
@@ -11,8 +12,8 @@ function samplePower(buf: Float32Array, i: number): number {
   return I * I + Q * Q
 }
 
-async function fetchSamples(start: number, length: number, stride: number): Promise<Float32Array> {
-  const raw = await window.snailAPI.getSamples(start, length, stride)
+async function fetchSamples(start: number, length: number, stride: number, recordingId: string): Promise<Float32Array> {
+  const raw = await window.snailAPI.getSamples(start, length, stride, recordingId)
   if (raw instanceof Float32Array) return raw
   return new Float32Array((raw as any).buffer ?? raw)
 }
@@ -37,6 +38,7 @@ export async function findNextPulse(
   threshold: number,
   cancelRef: { current: boolean }
 ): Promise<number | null> {
+  const job = recordingJob()
   const step = SCAN_CHUNK * SCAN_STRIDE
 
   if (direction === 'forward') {
@@ -44,12 +46,14 @@ export async function findNextPulse(
     let state: 'skip_signal' | 'find_signal' = 'skip_signal'
 
     for (let chunk = 0; chunk < MAX_CHUNKS && pos < totalSamples; chunk++) {
-      if (cancelRef.current) return null
+      if (cancelRef.current || !job.isCurrent()) return null
 
       const len = Math.min(SCAN_CHUNK, Math.ceil((totalSamples - pos) / SCAN_STRIDE))
       if (len <= 0) break
 
-      const buf = await fetchSamples(pos, len, SCAN_STRIDE)
+      const buf = await fetchSamples(pos, len, SCAN_STRIDE, job.recordingId)
+
+      if (!job.isCurrent()) return null
 
       for (let i = 0; i < Math.floor(buf.length / 2); i++) {
         const p = samplePower(buf, i)
@@ -69,13 +73,15 @@ export async function findNextPulse(
     let state: 'skip_signal' | 'find_end' | 'find_start' = 'skip_signal'
 
     for (let chunk = 0; chunk < MAX_CHUNKS && pos > 0; chunk++) {
-      if (cancelRef.current) return null
+      if (cancelRef.current || !job.isCurrent()) return null
 
       const fetchStart = Math.max(0, pos - step)
       const len = Math.min(SCAN_CHUNK, Math.ceil((pos - fetchStart) / SCAN_STRIDE) + 1)
       if (len <= 0) break
 
-      const buf = await fetchSamples(fetchStart, len, SCAN_STRIDE)
+      const buf = await fetchSamples(fetchStart, len, SCAN_STRIDE, job.recordingId)
+
+      if (!job.isCurrent()) return null
 
       // Scan backward through this chunk
       for (let i = Math.floor(buf.length / 2) - 1; i >= 0; i--) {

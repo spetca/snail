@@ -1,3 +1,5 @@
+import { centerFrequencyAt, captureSegments } from '../../shared/sigmf'
+import { recordingJob } from '../utils/recording'
 import React, { useEffect, useState } from 'react'
 import { useStore, type XAxisMode, type CursorState } from '../state/store'
 import type { SigMFAnnotation, ClassificationResult } from '../../shared/sample-formats'
@@ -17,9 +19,12 @@ export function ControlsPanel(): React.ReactElement {
   const xAxisMode = useStore((s) => s.xAxisMode)
   const cursors = useStore((s) => s.cursors)
   const cursorsEnabled = cursors.enabled
+  const selection = useStore((s) => s.selection)
   const scrollOffset = useStore((s) => s.scrollOffset)
   const viewHeight = useStore((s) => s.viewHeight)
   const annotations = useStore((s) => s.annotations)
+  const frequencyMode = useStore((s) => s.annotationFrequencyMode)
+  const setFrequencyMode = useStore((s) => s.setAnnotationFrequencyMode)
   const annotationsVisible = useStore((s) => s.annotationsVisible)
   const viewWidth = useStore((s) => s.viewWidth)
   const yZoomLevel = useStore((s) => s.yZoomLevel)
@@ -46,20 +51,19 @@ export function ControlsPanel(): React.ReactElement {
   const showAbsoluteFrequency = useStore((s) => s.showAbsoluteFrequency)
   const setShowAbsoluteFrequency = useStore((s) => s.setShowAbsoluteFrequency)
 
-  // Real-time updates to analysis windows
+  const analysisSelection = fileInfo && selection && cursors.enabled ? {
+    recordingId: fileInfo.recordingId,
+    start: Math.min(selection.sample1, selection.sample2),
+    length: Math.abs(selection.sample2 - selection.sample1),
+    fs: sampleRate
+  } : null
+
+  // Only physical sample changes trigger analysis, not viewport reprojection.
   useEffect(() => {
-    if (cursors.enabled && cursors.x1 !== cursors.x2) {
-      const samplesPerPx = Math.max(1, Math.round(fftSize / zoomLevel))
-      const xStart = Math.min(cursors.x1, cursors.x2)
-      const xEnd = Math.max(cursors.x1, cursors.x2)
-
-      const start = Math.round(xStart * samplesPerPx + scrollOffset)
-      const length = Math.round((xEnd - xStart) * samplesPerPx)
-
-      window.snailAPI.sendFFTUpdate({ start, length, fs: sampleRate })
-      window.snailAPI.sendConstellationUpdate({ start, length, fs: sampleRate })
-    }
-  }, [cursors.x1, cursors.x2, cursors.enabled, fftSize, zoomLevel, scrollOffset, sampleRate])
+    const range = analysisSelection?.length ? analysisSelection : null
+    window.snailAPI.sendFFTUpdate(range)
+    window.snailAPI.sendConstellationUpdate(range)
+  }, [fileInfo?.recordingId, selection?.sample1, selection?.sample2, cursors.enabled, sampleRate])
 
   const handleAnnotationClick = (ann: SigMFAnnotation) => {
     if (!fileInfo) return
@@ -206,27 +210,15 @@ export function ControlsPanel(): React.ReactElement {
           viewHeight={viewHeight}
           yZoomLevel={yZoomLevel}
           yScrollOffset={yScrollOffset}
+          showAbsoluteFrequency={showAbsoluteFrequency}
+          centerFrequency={centerFrequencyAt(fileInfo, scrollOffset)}
           onTakeFFT={() => {
+            window.snailAPI.sendFFTUpdate(analysisSelection)
             window.snailAPI.openFFTWindow()
-            const samplesPerPx = Math.max(1, Math.round(fftSize / zoomLevel))
-            const xStart = Math.min(cursors.x1, cursors.x2)
-            const xEnd = Math.max(cursors.x1, cursors.x2)
-            const start = Math.round(xStart * samplesPerPx + scrollOffset)
-            const length = Math.round((xEnd - xStart) * samplesPerPx)
-            setTimeout(() => {
-              window.snailAPI.sendFFTUpdate({ start, length, fs: sampleRate })
-            }, 500)
           }}
           onTakeConstellation={() => {
+            window.snailAPI.sendConstellationUpdate(analysisSelection)
             window.snailAPI.openConstellationWindow()
-            const samplesPerPx = Math.max(1, Math.round(fftSize / zoomLevel))
-            const xStart = Math.min(cursors.x1, cursors.x2)
-            const xEnd = Math.max(cursors.x1, cursors.x2)
-            const start = Math.round(xStart * samplesPerPx + scrollOffset)
-            const length = Math.round((xEnd - xStart) * samplesPerPx)
-            setTimeout(() => {
-              window.snailAPI.sendConstellationUpdate({ start, length, fs: sampleRate })
-            }, 500)
           }}
         />
       )}
@@ -238,6 +230,7 @@ export function ControlsPanel(): React.ReactElement {
           <InfoRow label="Size" value={formatBytes(fileInfo.fileSize)} />
           {fileInfo.centerFrequency && (
             <>
+              {captureSegments(fileInfo).length > 1 && <p style={{ fontSize: 11 }}>Multiple captures: the RF axis uses tuning at the left edge of the view.</p>}
               <InfoRow label="Center" value={`${(fileInfo.centerFrequency / 1e6).toFixed(3)} MHz`} />
               <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', marginTop: 4 }}>
                 <input
@@ -255,6 +248,13 @@ export function ControlsPanel(): React.ReactElement {
 
       {annotations.length > 0 && (
         <Section title="Annotations">
+          <label style={{ display: 'block', fontSize: 11, marginBottom: 8 }}>
+            Imported frequency bounds
+            <select value={frequencyMode} onChange={(e) => setFrequencyMode(e.target.value as 'rf' | 'legacy-baseband')} style={{ width: '100%', marginTop: 4 }}>
+              <option value="rf">SigMF (RF frequencies)</option>
+              <option value="legacy-baseband">Legacy Snail (baseband)</option>
+            </select>
+          </label>
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 6 }}>
             <input
               type="checkbox"
@@ -333,7 +333,7 @@ export function ControlsPanel(): React.ReactElement {
 
 function CursorInfoSection({
   cursors, fftSize, zoomLevel, scrollOffset, sampleRate,
-  viewHeight, yZoomLevel, yScrollOffset, onTakeFFT, onTakeConstellation
+  viewHeight, yZoomLevel, yScrollOffset, showAbsoluteFrequency, centerFrequency, onTakeFFT, onTakeConstellation
 }: {
   cursors: CursorState
   fftSize: number
@@ -343,6 +343,8 @@ function CursorInfoSection({
   viewHeight: number
   yZoomLevel: number
   yScrollOffset: number
+  showAbsoluteFrequency: boolean
+  centerFrequency: number
   onTakeFFT: () => void
   onTakeConstellation: () => void
 }) {
@@ -353,7 +355,7 @@ function CursorInfoSection({
   const timeDelta = sampleDelta / sampleRate
 
   const yNormOffset = viewHeight > 0 ? yScrollOffset / (fftSize / 2) : 0
-  const cf = showAbsoluteFrequency ? (fileInfo?.centerFrequency ?? 0) : 0
+  const cf = showAbsoluteFrequency ? centerFrequency : 0
   const freqFromY = (yPx: number) => viewHeight > 0
     ? (0.5 - yNormOffset - yPx / viewHeight / yZoomLevel) * sampleRate + cf
     : 0
@@ -418,7 +420,7 @@ function ClassifierSection({
   classifierLoaded, classifierLabels, classificationResults,
   onClassifierLoaded, onClassificationResults
 }: {
-  fileInfo: { totalSamples: number }
+  fileInfo: { totalSamples: number; recordingId: string }
   annotations: SigMFAnnotation[]
   cursors: CursorState
   fftSize: number
@@ -442,6 +444,7 @@ function ClassifierSection({
   const numClasses = Object.keys(classBreakdown).length
 
   const handleExtract = async () => {
+    const job = recordingJob(fileInfo.recordingId)
     const labeled = annotations.filter((a) => !!a.label)
     if (labeled.length === 0) {
       setStatusMsg('No labeled annotations on this file')
@@ -455,10 +458,12 @@ function ClassifierSection({
 
       for (const ann of labeled) {
         const res = await window.snailAPI.extractFeatures({
+          recordingId: job.recordingId,
           startSample: ann.sampleStart,
           sampleCount: ann.sampleCount,
           frameSize: FRAME_SIZE
         })
+        job.assertCurrent()
         if (res.frameCount > 0) {
           allFeatures.push(res.features)
           for (let i = 0; i < res.frameCount; ++i) allLabels.push(ann.label!)
@@ -477,9 +482,11 @@ function ClassifierSection({
 
       if (!featuresPath) setStatusMsg('Choose where to save features.json...')
       const exportResult = await window.snailAPI.exportFeatures({
+        recordingId: job.recordingId,
         features: combined, labels: allLabels, frameSize: FRAME_SIZE,
         appendToPath: featuresPath ?? undefined
       })
+      if (!job.isCurrent()) return
       if (!exportResult.success) {
         if (!exportResult.canceled) setStatusMsg('Save failed')
         else setStatusMsg(null)
@@ -499,11 +506,13 @@ function ClassifierSection({
   }
 
   const handleTrain = async () => {
+    const job = recordingJob(fileInfo.recordingId)
     if (!featuresPath) return
     setTraining(true)
     setStatusMsg('Training...')
     try {
       const trainResult = await window.snailAPI.trainClassifier(featuresPath)
+      if (!job.isCurrent()) return
       if (!trainResult.success) {
         setStatusMsg(`Training failed: ${trainResult.error}`)
         return
@@ -524,8 +533,9 @@ function ClassifierSection({
   }
 
   const handleLoadModel = async () => {
+    const job = recordingJob(fileInfo.recordingId)
     const path = await window.snailAPI.showOpenJsonDialog()
-    if (!path) return
+    if (!path || !job.isCurrent()) return
     try {
       const res = await window.snailAPI.loadClassifier(path)
       if (res.success && res.labels) {
@@ -541,6 +551,7 @@ function ClassifierSection({
   }
 
   const handleClassify = async () => {
+    const job = recordingJob(fileInfo.recordingId)
     setClassifying(true)
     setStatusMsg(null)
     try {
@@ -558,10 +569,12 @@ function ClassifierSection({
       }
 
       const results = await window.snailAPI.classifyRegion({
+        recordingId: job.recordingId,
         startSample,
         sampleCount,
         frameSize: FRAME_SIZE
       })
+      if (!job.isCurrent()) return
       const confident = results.filter((r) => r.confidence >= minConfidence)
       onClassificationResults(confident)
       const rejected = results.length - confident.length

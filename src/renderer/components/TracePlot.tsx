@@ -47,8 +47,10 @@ export function TracePlot(): React.ReactElement {
       : Math.ceil(rect.width * samplesPerPixel)
 
     // Load samples and draw
-    window.snailAPI.getSamples(start, samplesToRequest, stride)
+    let cancelled = false
+    window.snailAPI.getSamples(start, samplesToRequest, stride, fileInfo.recordingId)
       .then((samples) => {
+        if (cancelled) return
         if (!samples || samples.length === 0) return
 
         const midY = TRACE_HEIGHT / 2
@@ -123,6 +125,7 @@ export function TracePlot(): React.ReactElement {
       .catch(() => {
         // Silently fail if native addon not ready
       })
+    return () => { cancelled = true }
   }, [fileInfo, scrollOffset, fftSize, zoomLevel, cursors])
 
   return (
