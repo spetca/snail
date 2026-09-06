@@ -1,6 +1,6 @@
 {
   "name": "snail",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "author": "Shane Pet <hardwareteams@gmail.com>",
   "description": "Cross-platform IQ file analyzer",
   "main": "./out/main/index.js",
@@ -16,7 +16,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json",
     "test": "node --test test/renderer-regressions.cjs test/detection-regressions.cjs test/dataset-regressions.cjs",
     "test:native": "node --test test/native-regressions.cjs",
-    "test:desktop": "electron test/desktop-regressions.cjs"
+    "test:desktop": "electron test/desktop-regressions.cjs",
+    "screenshots": "electron test/capture-readme.cjs"
   },
   "devDependencies": {
     "@electron-toolkit/tsconfig": "^1.0.1",

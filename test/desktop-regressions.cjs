@@ -11,10 +11,11 @@ app.whenReady().then(async () => {
     import React from 'react'; import {createRoot} from 'react-dom/client';
     import App from './src/renderer/App'; import {useStore} from './src/renderer/state/store';
     import {ErrorBoundary} from './src/renderer/components/ErrorBoundary';
+    import {PartialImportDialog} from './src/renderer/components/PartialImportDialog';
     window.errors=[]; window.addEventListener('error', e=>window.errors.push(e.message));
     window.fftUpdates=0;
     window.project={schemaVersion:1,sourceKey:'smoke',source:{},revision:0,proposals:[],runs:[]};
-    window.snailRun=null;
+    window.snailRun=null;window.scanCalls=0;
     const snapshot = id => ({recordingId:id,project:structuredClone(window.project),progress:window.snailRun});
     window.datasetJob=null;
     window.snailAPI={
@@ -32,7 +33,7 @@ app.whenReady().then(async () => {
         return snapshot(id);
       },
       startDetection: async req => {
-        window.lastDetectionRequest=req;
+        window.scanCalls++;window.lastDetectionRequest=req;
         window.snailRun={id:'run-1',status:'complete',startSample:req.startSample,endSample:req.endSample,processedUntil:req.endSample,candidateCount:1};
         window.project={...window.project,revision:window.project.revision+1,proposals:[{id:'event-1',fingerprint:'fp',runId:'run-1',revision:1,status:'proposed',
           label:'',comment:'',sampleStart:req.startSample+10000,sampleCount:10000,freqLowerEdge:10000,freqUpperEdge:30000,peakAboveNoiseDb:20,frames:20,touchesBoundary:false,history:[]}]};
@@ -51,7 +52,11 @@ app.whenReady().then(async () => {
       computeFFT: async ()=>({data:new Float32Array(512),minPower:-120,maxPower:0}) };
     window.store=useStore;
     useStore.getState().setFileInfo({recordingId:'smoke-A',path:'/smoke.cf32',sampleRate:1000000,totalSamples:2000000,fileSize:16000000,format:'cf32',centerFrequency:100000000});
-    createRoot(document.getElementById('root')).render(<ErrorBoundary><App/></ErrorBoundary>);
+    const root = createRoot(document.getElementById('root'));
+    root.render(<ErrorBoundary><App/></ErrorBoundary>);
+    window.showImportProbe = () => root.render(<PartialImportDialog filePath="/synthetic.cf32"
+      probe={{sampleRate:1000000,totalSamples:2000000,fileSize:16000000,format:'cf32'}}
+      onConfirm={(start,count)=>{window.importResult={start,count}}} onCancel={()=>{}}/>);
   `, resolveDir: root, loader: 'tsx' }, bundle: true, write: false, platform: 'browser', format: 'iife', define: { 'process.env.NODE_ENV': '"development"' } }).outputFiles[0].text
   const css = fs.readFileSync(path.join(root, 'src/renderer/styles/global.css'),'utf8').split('\n').filter(line => !line.startsWith('@import')).join('\n')
   fs.writeFileSync(path.join(dir,'index.html'), `<html><head><style>${css}</style></head><body><div id="root"></div><script>${bundle.replace(/<\/script/gi,'<\\/script')}</script></body></html>`)
@@ -88,12 +93,38 @@ app.whenReady().then(async () => {
   }
   const clickText = async text => { await js(`Array.from(document.querySelectorAll('button')).find(b=>b.textContent===${JSON.stringify(text)}).click()`); await pause(120) }
   await clickText('Detect & label')
+  const draftValue = label => js(`document.querySelector('[aria-label="'+${JSON.stringify(label)}+'"]').value`)
+  const beginTyping = async label => { await js(`(()=>{const el=document.querySelector('[aria-label="'+${JSON.stringify(label)}+'"]');el.focus();el.select()})()`) }
+  const typeCharacters = async text => { for(const character of text){await win.webContents.insertText(character);await pause(20)} }
+  await beginTyping('Minimum power (dB)')
+  await typeCharacters('-')
+  assert.equal(await draftValue('Minimum power (dB)'), '-', 'Minus sign must survive as an editable draft')
   await clickText('Find transmissions')
+  assert.equal(await js('window.scanCalls'), 0, 'Invalid draft must block scanning instead of submitting an old value')
+  await beginTyping('Minimum power (dB)')
+  await typeCharacters('-100')
+  assert.equal(await draftValue('Minimum power (dB)'), '-100')
+  await beginTyping('Sample rate (Hz)')
+  await typeCharacters('1e')
+  assert.equal(await draftValue('Sample rate (Hz)'), '1e')
+  assert.equal(await js('window.store.getState().sampleRate'), 1000000)
+  await typeCharacters('6')
+  await js(`document.querySelector('[aria-label="Sample rate (Hz)"]').blur()`)
+  assert.equal(await js('window.store.getState().sampleRate'), 1000000)
+  await clickText('Find transmissions')
+  assert.equal(await js('window.lastDetectionRequest.config.minimumPowerDb'), -100)
   assert.equal(await js(`document.querySelector('[aria-label="Review candidate 1"]')!==null`), true)
   const setNumber = async (label, value) => {
     await js(`(()=>{const input=document.querySelector('[aria-label="'+${JSON.stringify(label)}+'"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}))})()`)
     await pause(80)
   }
+  await beginTyping('Min pulse width (ms)')
+  await typeCharacters('0.')
+  assert.equal(await draftValue('Min pulse width (ms)'), '0.', 'Decimal point must not be normalized away')
+  await typeCharacters('125')
+  assert.equal(await draftValue('Min pulse width (ms)'), '0.125')
+  await setNumber('Min pulse width (ms)', '')
+  assert.equal(await draftValue('Min pulse width (ms)'), '', 'Optional bounds must remain clearable')
   await setNumber('Min pulse width (ms)', '11')
   assert.equal(await js(`document.querySelector('[aria-label="Review candidate 1"]')!==null`), false)
   await setNumber('Min pulse width (ms)', '10')
@@ -132,6 +163,9 @@ app.whenReady().then(async () => {
   await pause(200)
   await js(`(()=>{const input=document.querySelector('[aria-label="Power threshold mode"]');input.value='absolute';input.dispatchEvent(new Event('change',{bubbles:true}))})()`)
   await pause(80)
+  await beginTyping('Absolute threshold (dB)')
+  await typeCharacters('-100')
+  assert.equal(await draftValue('Absolute threshold (dB)'), '-100')
   await setNumber('Absolute threshold (dB)', '-50')
   await clickText('Find transmissions')
   assert.equal(await js('window.lastDetectionRequest.config.thresholdMode'), 'absolute')
@@ -145,6 +179,18 @@ app.whenReady().then(async () => {
   await pause(100)
   assert.ok(await highlightPixels() >= 16, 'Subpixel candidates must remain visible at the current zoom')
   fs.writeFileSync(path.join(dir,'smoke.png'), (await win.webContents.capturePage()).toPNG())
-  console.log('PASS: Electron cursor toggle, rectangle drag, wheel zoom, resize, WebGL loss/recovery, detection review/acceptance, dataset export controls, width/bandwidth filters, queue reset, current-view ROI and canvas highlights, file switch.')
+  await js('window.showImportProbe()'); await pause(100)
+  await setNumber('Import end (seconds)', '')
+  await clickText('Load Selection')
+  assert.equal(await js('window.importResult'), undefined, 'Blank import bounds must not submit stale values')
+  await setNumber('Import start (seconds)', '1')
+  await setNumber('Import end (seconds)', '0.5')
+  await clickText('Load Selection')
+  assert.equal(await js('window.importResult'), undefined, 'Reversed ranges must not submit')
+  await setNumber('Import start (seconds)', '1.25e-1')
+  await setNumber('Import end (seconds)', '0.25')
+  await clickText('Load Selection')
+  assert.deepEqual(await js('window.importResult'), {start:125000,count:125000})
+  console.log('PASS: Electron cursor toggle, rectangle drag, wheel zoom, resize, WebGL loss/recovery, detection review/acceptance, dataset export controls, width/bandwidth filters, queue reset, current-view ROI and canvas highlights, file switch, numeric keyboard entry and import validation.')
   win.destroy(); fs.rmSync(dir, { recursive: true, force: true }); app.exit(0)
 }).catch(error => { console.error(error); console.error('Smoke artifacts:', dir); app.exit(1) })

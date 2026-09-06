@@ -1,3 +1,4 @@
+import { NumericInput } from './NumericInput'
 import { centerFrequencyAt, captureSegments } from '../../shared/sigmf'
 import { recordingJob } from '../utils/recording'
 import React, { useEffect, useState } from 'react'
@@ -93,10 +94,9 @@ export function ControlsPanel(): React.ReactElement {
       }}
     >
       <Section title="Sample Rate">
-        <input
-          type="number"
+        <NumericInput aria-label="Sample rate (Hz)" positive commitOnBlur
           value={sampleRate}
-          onChange={(e) => setSampleRate(Number(e.target.value))}
+          onValueChange={setSampleRate}
           style={{ width: '100%' }}
         />
       </Section>

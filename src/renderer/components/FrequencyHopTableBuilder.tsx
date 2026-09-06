@@ -1,4 +1,6 @@
-import React, { useState, useCallback } from 'react'
+import { NumericInput } from './NumericInput'
+import { requireValidInputs } from '../utils/numeric-input'
+import React, { useState, useCallback, useRef } from 'react'
 import { useStore } from '../state/store'
 import type { PulseRecord } from '../../shared/sample-formats'
 import { HopVisualizer } from './HopVisualizer'
@@ -140,11 +142,9 @@ function ParamRow({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{label}</span>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <input
-          type="text"
-          inputMode="decimal"
-          value={value}
-          onChange={(e) => onValue(e.target.value)}
+        <NumericInput aria-label={label} positive
+          value={Number(value)}
+          onValueChange={value => onValue(String(value))}
           style={inputStyle}
         />
         <span style={unitStyle}>{unit}</span>
@@ -152,11 +152,9 @@ function ParamRow({
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 5, flex: 1 }}>
           <span style={{ color: 'var(--text-dim)', fontSize: 12, flexShrink: 0 }}>±</span>
-          <input
-            type="text"
-            inputMode="decimal"
-            value={tol}
-            onChange={(e) => onTol(e.target.value)}
+          <NumericInput aria-label={`${label} tolerance`} min={0}
+            value={Number(tol)}
+            onValueChange={value => onTol(String(value))}
             style={inputStyle}
             placeholder="tolerance"
           />
@@ -181,11 +179,9 @@ function SingleRow({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{label}</span>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <input
-          type="text"
-          inputMode="decimal"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
+        <NumericInput aria-label={label} min={0} positive={unit === '%'} max={unit === '%' ? 100 : undefined}
+          value={Number(value)}
+          onValueChange={value => onChange(String(value))}
           style={inputStyle}
         />
         <span style={unitStyle}>{unit}</span>
@@ -197,6 +193,7 @@ function SingleRow({
 // ── Main component ─────────────────────────────────────────────────────────
 
 export function FrequencyHopTableBuilder({ onClose }: Props): React.ReactElement {
+  const numericFields = useRef<HTMLDivElement>(null)
   const fileInfo = useStore((s) => s.fileInfo)
   const sampleRate = useStore((s) => s.sampleRate)
   const showAbsoluteFrequency = useStore((s) => s.showAbsoluteFrequency)
@@ -228,8 +225,8 @@ export function FrequencyHopTableBuilder({ onClose }: Props): React.ReactElement
     if (region === 'view') {
       const stride = Math.max(1, Math.round(fftSize / zoomLevel))
       return {
-        startSample: scrollOffset,
-        endSample: Math.min(fileInfo.totalSamples, scrollOffset + viewWidth * stride)
+        startSample: Math.round(scrollOffset),
+        endSample: Math.min(fileInfo.totalSamples, Math.ceil(scrollOffset + viewWidth * stride))
       }
     }
     if (region === 'cursors' && cursors.enabled) {
@@ -246,15 +243,17 @@ export function FrequencyHopTableBuilder({ onClose }: Props): React.ReactElement
 
   const handleRun = useCallback(async () => {
     if (!fileInfo) return
-    const pw = parseFloat(pulseWidthUs)
-    const pwt = parseFloat(pulseWidthTolUs)
-    const obw = parseFloat(obwMHz)
-    const obwt = parseFloat(obwTolMHz)
-    const thr = parseFloat(threshDb)
-    const pct = parseFloat(obwPct)
+    try { requireValidInputs(numericFields.current) }
+    catch (error) { setError(String(error)); return }
+    const pw = Number(pulseWidthUs)
+    const pwt = Number(pulseWidthTolUs)
+    const obw = Number(obwMHz)
+    const obwt = Number(obwTolMHz)
+    const thr = Number(threshDb)
+    const pct = Number(obwPct)
 
-    if ([pw, pwt, obw, obwt, thr, pct].some(isNaN)) {
-      setError('All fields must be valid numbers.')
+    if ([pw, pwt, obw, obwt, thr, pct, obw * 1e6, obwt * 1e6].some(value => !Number.isFinite(value)) || pw <= 0 || pwt < 0 || obw <= 0 || obwt < 0 || thr < 0 || pct <= 0 || pct > 100) {
+      setError('Use positive width/bandwidth, nonnegative tolerances/threshold, and a percentile above 0 and at most 100.')
       return
     }
 
@@ -293,7 +292,7 @@ export function FrequencyHopTableBuilder({ onClose }: Props): React.ReactElement
   }
 
   return (
-    <div style={{
+    <div ref={numericFields} style={{
       position: 'fixed', inset: 0, zIndex: 300,
       background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)',
       display: 'flex', alignItems: 'center', justifyContent: 'center'
@@ -468,7 +467,7 @@ export function FrequencyHopTableBuilder({ onClose }: Props): React.ReactElement
 
             {/* Hop Set tab */}
             {rightTab === 'hopset' && pulses && pulses.length > 0 && (() => {
-              const clusterRadius = parseFloat(obwTolMHz) * 1e6 || 250e3
+              const clusterRadius = Number(obwTolMHz) * 1e6
               const channels = clusterHopFrequencies(pulses, clusterRadius)
               const total = pulses.length
               return (

@@ -1,3 +1,4 @@
+import { NumericInput } from './NumericInput'
 import type { AnalysisSelection } from '../../shared/sample-formats'
 import { tsfft } from '../utils/fft'
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
@@ -17,13 +18,11 @@ export function ConstellationWindow(): React.ReactElement | null {
     // CFO adjustments
     const [cfoCoarse, setCfoCoarse] = useState(0)
     const [cfoFine, setCfoFine] = useState(0)
-    const [cfoCoarseInput, setCfoCoarseInput] = useState('0')
-    const [cfoFineInput, setCfoFineInput] = useState('0')
 
     // Decimation
     const [decimateMode, setDecimateMode] = useState<DecimateMode>('factor')
     const [decimateFactor, setDecimateFactor] = useState(1)
-    const [targetRateInput, setTargetRateInput] = useState('1000000')
+    const [targetRate, setTargetRate] = useState(1000000)
 
     // OFDM Mode
     const [ofdmFftSize, setOfdmFftSize] = useState(1024)
@@ -54,12 +53,6 @@ export function ConstellationWindow(): React.ReactElement | null {
 
     const fs = cursorRange?.fs || sampleRate
     const totalCfo = cfoCoarse + cfoFine
-
-    // Parse target rate
-    const targetRate = useMemo(() => {
-        const parsed = Number(targetRateInput)
-        return isNaN(parsed) || parsed <= 0 ? 1000000 : parsed
-    }, [targetRateInput])
 
     // Update decimateFactor based on mode
     useEffect(() => {
@@ -337,20 +330,13 @@ export function ConstellationWindow(): React.ReactElement | null {
                             value={cfoCoarse}
                             onChange={(e) => {
                                 const v = Number(e.target.value)
-                                setCfoCoarse(v); setCfoCoarseInput(v.toString())
+                                setCfoCoarse(v)
                             }}
                             style={{ width: '100%' }}
                         />
-                        <input
-                            type="text"
-                            value={cfoCoarseInput}
-                            onChange={(e) => {
-                                setCfoCoarseInput(e.target.value)
-                                const n = Number(e.target.value)
-                                if (!isNaN(n)) setCfoCoarse(n)
-                            }}
-                            style={inputStyle}
-                        />
+                        <NumericInput aria-label="Coarse CFO (Hz)" commitOnBlur
+                            value={cfoCoarse} onValueChange={setCfoCoarse}
+                            min={-cfoCoarseLimit} max={cfoCoarseLimit} style={inputStyle} />
                     </div>
 
                     <div style={sidebarSectionStyle}>
@@ -363,20 +349,13 @@ export function ConstellationWindow(): React.ReactElement | null {
                             value={cfoFine}
                             onChange={(e) => {
                                 const v = Number(e.target.value)
-                                setCfoFine(v); setCfoFineInput(v.toString())
+                                setCfoFine(v)
                             }}
                             style={{ width: '100%' }}
                         />
-                        <input
-                            type="text"
-                            value={cfoFineInput}
-                            onChange={(e) => {
-                                setCfoFineInput(e.target.value)
-                                const n = Number(e.target.value)
-                                if (!isNaN(n)) setCfoFine(n)
-                            }}
-                            style={inputStyle}
-                        />
+                        <NumericInput aria-label="Fine CFO (Hz)" commitOnBlur
+                            value={cfoFine} onValueChange={setCfoFine}
+                            min={-cfoFineLimit} max={cfoFineLimit} style={inputStyle} />
                     </div>
 
                     <div style={sidebarSectionStyle}>
@@ -386,7 +365,6 @@ export function ConstellationWindow(): React.ReactElement | null {
                         </div>
                         <button onClick={() => {
                             setCfoCoarse(0); setCfoFine(0);
-                            setCfoCoarseInput('0'); setCfoFineInput('0');
                         }} style={smallBtnStyle}>Reset Offset</button>
                     </div>
 
@@ -406,7 +384,7 @@ export function ConstellationWindow(): React.ReactElement | null {
                             </select>
                         )}
                         {decimateMode === 'rate' && (
-                            <input type="text" value={targetRateInput} onChange={(e) => setTargetRateInput(e.target.value)} style={inputStyle} placeholder="3.84e6" />
+                            <NumericInput aria-label="Target sample rate (Hz)" positive commitOnBlur value={targetRate} onValueChange={setTargetRate} style={inputStyle} placeholder="3.84e6" />
                         )}
                         {decimateMode === 'selection' && (
                             <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', background: 'var(--bg3)', padding: 6, borderRadius: 4 }}>
