@@ -225,3 +225,26 @@ test('absolute threshold has bounded hysteresis and rejects invalid modes', () =
   assert.equal(events.length, 1)
   assert.throws(() => new SpectralDetector({ ...config, thresholdMode: 'unknown' }, 128000, 0, 640, () => {}), /Invalid detector/)
 })
+
+
+test('a tight frequency crop around a burst does not promote the burst to its own noise floor', () => {
+  const events = []
+  const detector = new SpectralDetector(config, 128000, 0, 640, e => events.push(e), { low: 6000, high: 9000 })
+  detector.push(0, rows(10)); detector.finish()
+  assert.equal(events.length, 1)
+  assert.equal(events[0].freqLowerEdge, 6000)
+  assert.equal(events[0].freqUpperEdge, 9000)
+})
+
+test('below-noise absolute thresholds report merged activity rejected by size filters', async t => {
+  const f = fixture(t)
+  f.projects.start({ ...f.request, config: { ...config, thresholdMode: 'absolute', minimumPowerDb: -120, maxBandwidthHz: 10000 } })
+  await f.projects.settled()
+  const state = f.projects.state(f.info.recordingId)
+  assert.equal(state.progress.candidateCount, 0)
+  assert.equal(state.progress.diagnostics.frames, 20)
+  assert.equal(state.progress.diagnostics.saturatedFrames, 20)
+  assert.equal(state.progress.diagnostics.regions, 1)
+  assert.equal(state.progress.diagnostics.rejectedByFilters, 1)
+  assert.equal(fs.existsSync(f.file + '.sigmf-meta'), false)
+})

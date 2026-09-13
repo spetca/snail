@@ -5,7 +5,7 @@ import { DatasetExport } from './DatasetExport'
 import React, { useEffect, useRef, useState } from 'react'
 import { useStore } from '../state/store'
 import { recordingJob } from '../utils/recording'
-import { DEFAULT_DETECTION_CONFIG, matchesEventFilters, type DetectionConfig, type DetectionFrequencyRange, type ReviewStatus } from '../../shared/detection'
+import { matchesEventFilters, type DetectionConfig, type DetectionFrequencyRange, type ReviewStatus } from '../../shared/detection'
 import { formatFrequency, formatTimeValue } from '../../shared/units'
 
 export function DetectionPanel(): React.ReactElement {
@@ -20,7 +20,9 @@ export function DetectionPanel(): React.ReactElement {
   const selectedId = useStore(s => s.selectedProposalId)
   const selection = useStore(s => s.selection)
   const focus = useStore(s => s.focusProposal)
-  const [config, setConfig] = useState(DEFAULT_DETECTION_CONFIG)
+  const config = useStore(s => s.detectionConfig)
+  const setConfig = (detectionConfig: DetectionConfig) => useStore.setState({ detectionConfig })
+  const proposalsVisible = useStore(s => s.proposalsVisible)
   const [region, setRegion] = useState<'view' | 'selection' | 'recording'>('view')
   const [filter, setFilter] = useState<ReviewStatus>('proposed')
   const [busy, setBusy] = useState(false)
@@ -48,7 +50,7 @@ export function DetectionPanel(): React.ReactElement {
     finally { setBusy(false) }
   }
 
-  const startScan = () => operation(async () => {
+  const startScan = (scanConfig = config) => operation(async () => {
     if (!fileInfo) return
     requireValidInputs(scanFields.current)
     const state = useStore.getState(), job = recordingJob(fileInfo.recordingId)
@@ -66,7 +68,7 @@ export function DetectionPanel(): React.ReactElement {
       startSample = Math.round(state.scrollOffset)
       endSample = Math.min(fileInfo.totalSamples, Math.ceil(startSample + state.viewWidth * Math.max(1, Math.round(state.fftSize / state.zoomLevel))))
     }
-    const response = await window.snailAPI.startDetection({ recordingId: job.recordingId, startSample, endSample, config, frequencyRange })
+    const response = await window.snailAPI.startDetection({ recordingId: job.recordingId, startSample, endSample, config: scanConfig, frequencyRange })
     if (job.isCurrent()) state.applyDetectionState(response)
   })
 
@@ -135,7 +137,7 @@ export function DetectionPanel(): React.ReactElement {
       <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: '8px 0' }}>
         {config.thresholdMode === 'absolute'
           ? 'Starts regions above this fixed FFT power level; follows their edges down to 4 dB below it. Use the same FFT size as the view when comparing power. Values are not calibrated dBm.'
-          : 'Detects contrast above the median noise estimate, not simply the brightest signals. Broad signals filling the view can raise this estimate and be missed; try Absolute power for those.'}
+          : 'Detects contrast above the quieter of the full-spectrum and visible-band median noise estimates, not simply the brightest signals. Broad signals filling the recording bandwidth can raise this estimate and be missed; try Absolute power for those.'}
       </p>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         {rangeField('Min pulse width (ms)', 'minPulseWidthSeconds', 1000)}
@@ -151,13 +153,13 @@ export function DetectionPanel(): React.ReactElement {
       </details>
       <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: '8px 0' }}>Overlapping FFT windows cover the full time range. Dense wideband signals can hide the noise floor; this is an activity detector, not a protocol classifier.</p>
       {sampleRate !== fileInfo?.sampleRate && <p role="alert">Detection uses the recording sample rate. Restore it or save corrected metadata and reopen before scanning.</p>}
-      <button className="primary" onClick={startScan} disabled={!project || sampleRate !== fileInfo?.sampleRate} style={{ width: '100%' }}>Find transmissions</button>
+      <button className="primary" onClick={() => startScan()} disabled={!project || sampleRate !== fileInfo?.sampleRate} style={{ width: '100%' }}>Find transmissions</button>
     </fieldset>
     {progress && <div role="status" style={{ marginTop: 10, fontSize: 11 }}>
       <progress max={progress.endSample - progress.startSample} value={progress.processedUntil - progress.startSample} style={{ width: '100%' }} />
       <div>{progress.status} · {Math.round(100 * (progress.processedUntil - progress.startSample) / (progress.endSample - progress.startSample))}% scanned · {progress.candidateCount} candidates</div>
       {progress.error && <p>{progress.error}</p>}
-      {progress.status === 'complete' && progress.candidateCount === 0 && <p>No activity matched this scan. Try lowering the threshold or relaxing width/bandwidth filters. For a very narrow frequency view, increase detection FFT size.</p>}
+      {progress.status === 'complete' && progress.candidateCount === 0 && <p>No activity matched this scan. Check the region counts below; adjust the threshold or relax width/bandwidth filters. For a very narrow frequency view, increase detection FFT size.</p>}
       {running && <button style={{ marginTop: 6 }} onClick={() => operation(async () => {
         if (fileInfo) await window.snailAPI.cancelDetection(fileInfo.recordingId, progress.id)
       })}>Cancel scan</button>}
@@ -168,6 +170,18 @@ export function DetectionPanel(): React.ReactElement {
         if (fileInfo) useStore.getState().applyDetectionState(await window.snailAPI.getDetectionState(fileInfo.recordingId))
       })}>Reload queue</button>
     </div>}
+    {progress?.diagnostics && <div style={{ fontSize: 11, marginTop: 8 }}>
+      <p>{progress.diagnostics.regions} regions found · {progress.diagnostics.rejectedByFilters} outside width/bandwidth limits · {progress.diagnostics.rejectedBySupport} too brief or narrow.</p>
+      {progress.diagnostics.frames > 0 && progress.diagnostics.saturatedFrames / progress.diagnostics.frames > 0.5 && <p role="alert">Most of the scanned band is above the threshold. Noise and bursts can merge into a large region that fails your size filters. Raise the absolute threshold or use noise-relative detection.</p>}
+      {progress.status === 'complete' && progress.config.thresholdMode === 'absolute' && <button disabled={disabled} onClick={() => {
+        const next = { ...config, thresholdMode: 'relative' as const }
+        setConfig(next); void startScan(next)
+      }}>Rescan above noise</button>}
+    </div>}
+    <label style={{ display: 'block', marginTop: 12, fontSize: 11 }}>
+      <input type="checkbox" checked={proposalsVisible} onChange={e => useStore.setState({ proposalsVisible: e.target.checked })} /> Show pending proposals on plot
+    </label>
+    <p style={{ fontSize: 10, color: 'var(--text-muted)' }}>Orange boxes are unapproved proposals saved in a local review queue, separate from SigMF labels. Only proposals matching these size filters appear while this panel is open.</p>
     <label style={{ display: 'block', margin: '16px 0 8px', fontSize: 11 }}>Review queue · {matching.length} of {proposals.length} match
       <select aria-label="Review filter" value={filter} onChange={event => setFilter(event.target.value as ReviewStatus)} style={{ width: '100%', marginTop: 4 }}>
         <option value="proposed">Pending ({count('proposed')})</option><option value="accepted">Accepted ({count('accepted')})</option><option value="rejected">Rejected ({count('rejected')})</option>

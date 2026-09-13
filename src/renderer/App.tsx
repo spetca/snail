@@ -106,7 +106,7 @@ function MainApp(): React.ReactElement {
       <Toolbar onExport={() => setShowExport(true)} onAnnotate={() => setShowAnnotation(true)} onOpen={openWithProbe} onHopTable={() => setShowHopTable(true)} />
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        <ControlsPanel key={fileInfo?.recordingId ?? 'empty'} />
+        <ControlsPanel key={`controls:${fileInfo?.recordingId ?? 'empty'}`} />
 
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
           {loading && (
@@ -191,7 +191,7 @@ function MainApp(): React.ReactElement {
             </div>
           )}
         </div>
-        {fileInfo && showDetectionPanel && <DetectionPanel key={fileInfo.recordingId} />}
+        {fileInfo && showDetectionPanel && <DetectionPanel key={`detection:${fileInfo.recordingId}`} />}
       </div>
 
       <StatusBar />

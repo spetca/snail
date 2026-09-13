@@ -33,6 +33,10 @@ bool Classifier::load(const std::string& path, std::string& errorOut) {
     try {
         nComponents_ = j.at("n_components").get<int>();
 
+        frameSize_ = j.value("frame_size", 256);
+        if (nComponents_ < 1 || nComponents_ > NUM_FEATURES || frameSize_ < 4 || frameSize_ > 65536)
+            throw std::runtime_error("Invalid component count or frame size");
+
         // PCA mean
         auto& jMean = j.at("pca_mean");
         pcaMean_.resize(NUM_FEATURES);
@@ -67,7 +71,7 @@ bool Classifier::load(const std::string& path, std::string& errorOut) {
             labels_.push_back(ce.label);
             classes_.push_back(std::move(ce));
         }
-    } catch (const json::exception& e) {
+    } catch (const std::exception& e) {
         errorOut = std::string("Model format error: ") + e.what();
         return false;
     }
@@ -114,17 +118,20 @@ int Classifier::classify(const std::array<float, NUM_FEATURES>& features, float&
         return -1;
     }
 
+    for (float value : features) if (!std::isfinite(value)) { confidenceOut = 0.0f; return -1; }
     auto proj = project(features);
 
     float bestD2 = std::numeric_limits<float>::max();
-    int bestIdx = 0;
+    int bestIdx = -1;
     for (int i = 0; i < static_cast<int>(classes_.size()); ++i) {
         float d2 = mahalanobis2(proj, classes_[i]);
-        if (d2 < bestD2) {
+        if (std::isfinite(d2) && d2 >= 0 && d2 < bestD2) {
             bestD2 = d2;
             bestIdx = i;
         }
     }
+
+    if (bestIdx < 0) { confidenceOut = 0.0f; return -1; }
 
     // Confidence: convert distance to a 0-1 score using exponential decay.
     // d2=0 → confidence=1, d2=large → confidence≈0

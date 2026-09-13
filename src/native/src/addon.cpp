@@ -564,58 +564,71 @@ Napi::Value LoadClassifier(const Napi::CallbackInfo& info) {
 
 // ── classifyRegion({ startSample, sampleCount, frameSize }) → Array<ClassifyFrame> ──
 
+class ClassifyWorker : public Napi::AsyncWorker {
+public:
+    ClassifyWorker(Napi::Env env, Napi::Promise::Deferred deferred, size_t start, size_t count)
+        : Napi::AsyncWorker(env), deferred_(deferred), source_(g_source), classifier_(g_classifier), start_(start), count_(count) {}
+    void Execute() override {
+        try {
+            const size_t size = classifier_.frameSize();
+            FeatureExtractor extractor(static_cast<int>(size));
+            std::vector<cf32> frame(size);
+            for (size_t offset = 0; offset + size <= count_; offset += size) {
+                source_->getSamples(start_ + offset, size, frame.data());
+                auto feat = extractor.extract(frame.data(), size);
+                float score = 0;
+                int label = classifier_.classify(feat, score);
+                results_.push_back({start_ + offset, size, classifier_.labelFor(label), score});
+            }
+        } catch (const std::exception& e) { SetError(e.what()); }
+    }
+    void OnOK() override {
+        auto env = Env();
+        auto arr = Napi::Array::New(env, results_.size());
+        for (size_t i = 0; i < results_.size(); ++i) {
+            const auto& result = results_[i];
+            auto obj = Napi::Object::New(env);
+            obj.Set("sampleStart", Napi::Number::New(env, static_cast<double>(result.sampleStart)));
+            obj.Set("sampleCount", Napi::Number::New(env, static_cast<double>(result.sampleCount)));
+            obj.Set("label", result.label);
+            obj.Set("confidence", result.confidence);
+            arr.Set(static_cast<uint32_t>(i), obj);
+        }
+        deferred_.Resolve(arr);
+    }
+    void OnError(const Napi::Error& error) override { deferred_.Reject(error.Value()); }
+private:
+    Napi::Promise::Deferred deferred_;
+    std::shared_ptr<InputSource> source_;
+    Classifier classifier_;
+    size_t start_, count_;
+    std::vector<ClassifyFrame> results_;
+};
+
 Napi::Value ClassifyRegion(const Napi::CallbackInfo& info) {
     auto env = info.Env();
-    auto config = info[0].As<Napi::Object>();
-
-    size_t startSample = static_cast<size_t>(config.Get("startSample").As<Napi::Number>().DoubleValue());
-    size_t sampleCount = static_cast<size_t>(config.Get("sampleCount").As<Napi::Number>().DoubleValue());
-    int frameSize = 256;
-    if (config.Has("frameSize") && config.Get("frameSize").IsNumber())
-        frameSize = config.Get("frameSize").As<Napi::Number>().Int32Value();
-    if (frameSize < 4) frameSize = 256;
-
-    if (!g_classifier.loaded()) {
-        Napi::Error::New(env, "No classifier loaded").ThrowAsJavaScriptException();
-        return env.Undefined();
-    }
-
-    auto arr = Napi::Array::New(env);
     try {
-        size_t total = g_source->totalSamples();
-        if (startSample >= total)
-            return arr;
-        if (startSample + sampleCount > total)
-            sampleCount = total - startSample;
-
-        size_t frameCount = sampleCount / static_cast<size_t>(frameSize);
-        if (frameCount == 0) return arr;
-
-        FeatureExtractor extractor(frameSize);
-        std::vector<cf32> frame(frameSize);
-        uint32_t resultIdx = 0;
-
-        for (size_t fi = 0; fi < frameCount; ++fi) {
-            size_t offset = startSample + fi * static_cast<size_t>(frameSize);
-            g_source->getSamples(offset, static_cast<size_t>(frameSize), frame.data());
-            auto feat = extractor.extract(frame.data(), static_cast<size_t>(frameSize));
-
-            float conf = 0.0f;
-            int labelIdx = g_classifier.classify(feat, conf);
-            std::string label = g_classifier.labelFor(labelIdx);
-
-            auto obj = Napi::Object::New(env);
-            obj.Set("sampleStart", Napi::Number::New(env, static_cast<double>(offset)));
-            obj.Set("sampleCount", Napi::Number::New(env, static_cast<double>(frameSize)));
-            obj.Set("label", Napi::String::New(env, label));
-            obj.Set("confidence", Napi::Number::New(env, static_cast<double>(conf)));
-            arr.Set(resultIdx++, obj);
-        }
+        if (!g_classifier.loaded()) throw std::runtime_error("No classifier loaded");
+        if (!g_source) throw std::runtime_error("No recording open");
+        auto config = info[0].As<Napi::Object>();
+        const double start = config.Get("startSample").As<Napi::Number>().DoubleValue();
+        const double count = config.Get("sampleCount").As<Napi::Number>().DoubleValue();
+        if (!std::isfinite(start) || !std::isfinite(count) || start < 0 || count <= 0 ||
+            std::floor(start) != start || std::floor(count) != count || start + count > g_source->totalSamples())
+            throw std::runtime_error("Choose a nonempty classification range inside the recording");
+        const int frameSize = g_classifier.frameSize();
+        if (config.Has("frameSize") && !config.Get("frameSize").IsUndefined() &&
+            config.Get("frameSize").As<Napi::Number>().DoubleValue() != frameSize)
+            throw std::runtime_error("Classification frame size must match the loaded model");
+        if (count < frameSize) throw std::runtime_error("Selection is shorter than one classifier frame");
+        if (count / frameSize > 50000) throw std::runtime_error("Classification is limited to 50000 frames; zoom in or select a smaller time range");
+        auto deferred = Napi::Promise::Deferred::New(env);
+        (new ClassifyWorker(env, deferred, static_cast<size_t>(start), static_cast<size_t>(count)))->Queue();
+        return deferred.Promise();
     } catch (const std::exception& e) {
         Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
         return env.Undefined();
     }
-    return arr;
 }
 
 // ── findPulses(config) -> Promise<PulseRecord[]> ─────────────────────────────

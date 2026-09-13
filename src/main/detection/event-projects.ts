@@ -108,6 +108,7 @@ export class EventProjects {
     const run: DetectionRun = { id: randomUUID(), detectorVersion: DETECTOR_VERSION, config: { ...request.config },
       startSample: request.startSample, endSample: request.endSample, sampleRate: info.sampleRate,
       ...(request.frequencyRange ? { frequencyRange: { ...request.frequencyRange } } : {}),
+      diagnostics: { frames: 0, saturatedFrames: 0, regions: 0, rejectedBySupport: 0, rejectedByFilters: 0 },
       startedAt: new Date().toISOString(), status: 'running', processedUntil: request.startSample, candidateCount: 0 }
     const project = { ...previous, proposals: [...previous.proposals], runs: [...previous.runs, run], revision: previous.revision + 1 }
     this.save(project)
@@ -158,6 +159,10 @@ export class EventProjects {
             label: '', comment: '', bounds: bounds(event) })
           project.proposals.push(proposal); fingerprints.add(fingerprint); ++project.revision
         }, run.frequencyRange)
+        const prior = { ...run.diagnostics! }
+        const updateDiagnostics = () => {
+          for (const key of Object.keys(prior) as (keyof typeof prior)[]) run.diagnostics![key] = prior[key] + detector.diagnostics[key]
+        }
         for (let position = start; position < end; position += 256 * detector.stride) {
           if (!stillCurrent()) break
           const stat = fs.statSync(project.source.path)
@@ -168,12 +173,14 @@ export class EventProjects {
           const expectedRows = Math.min(256, Math.ceil((end - position) / detector.stride))
           if (data.length !== expectedRows * run.config.fftSize) throw new Error('Incomplete FFT tile; scan stopped without claiming complete coverage')
           detector.push(position, data)
+          updateDiagnostics()
           run.processedUntil = Math.min(end, position + expectedRows * detector.stride)
           if (Date.now() - checkpointAt > 2000) { this.save(project); checkpointAt = Date.now() }
           await new Promise<void>(resolve => setImmediate(resolve))
         }
         if (!stillCurrent()) break
         detector.finish()
+        updateDiagnostics()
       }
       run.status = stillCurrent() ? 'complete' : 'cancelled'
     } catch (error) {
@@ -209,7 +216,8 @@ export class EventProjects {
     let sigmfMetaJson: string | undefined
     if (request.action === 'accept') {
       if (!proposal.label) throw new Error('Give the event a label before accepting it')
-      const comment = [proposal.comment, `Reviewed Snail proposal ${proposal.id}; run ${proposal.runId}; ${DETECTOR_VERSION}; peak ${proposal.peakAboveNoiseDb.toFixed(1)} dB above median spectral noise.`].filter(Boolean).join('\n')
+      const detectorVersion = project.runs.find(run => run.id === proposal.runId)?.detectorVersion ?? DETECTOR_VERSION
+      const comment = [proposal.comment, `Reviewed Snail proposal ${proposal.id}; run ${proposal.runId}; ${detectorVersion}; peak ${proposal.peakAboveNoiseDb.toFixed(1)} dB above median spectral noise.`].filter(Boolean).join('\n')
       sigmfMetaJson = saveAnnotationMetadata(info, { ...bounds(proposal), label: proposal.label, comment }, request.frequencyMode, proposal.id)
       proposal.status = 'accepted'
     } else if (request.action === 'reject') proposal.status = 'rejected'

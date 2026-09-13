@@ -116,3 +116,36 @@ test('dataset export using native samples reopens with tuned RF center and exact
   const actual = native.getSamples(0,5000,1)
   for (let n = 0; n < 5000; n++) { assert.ok(Math.abs(actual[2*n]-1)<1e-6); assert.ok(Math.abs(actual[2*n+1])<1e-6) }
 })
+
+function classifierModel(frameSize = 256, label = 'test') {
+  return { n_components: 1, frame_size: frameSize, pca_mean: Array(15).fill(0),
+    pca_components: [Array(15).fill(0)], classes: [{ label, centroid: [0], inv_cov: [[1]] }] }
+}
+
+test('classification retains its source and model across file/model switches and uses model frame size', async () => {
+  const model = path.join(dir, 'classifier.json')
+  fs.writeFileSync(model, JSON.stringify(classifierModel(512, 'original')))
+  assert.equal(native.loadClassifier(model).success, true)
+  native.openFile(aPath)
+  const pending = native.classifyRegion({ startSample: 0, sampleCount: 4096 })
+  assert.equal(typeof pending.then, 'function', 'Classification must not block the Electron main thread')
+  native.openFile(bPath)
+  fs.writeFileSync(model, JSON.stringify(classifierModel(256, 'replacement')))
+  native.loadClassifier(model)
+  const result = await pending
+  assert.equal(result.length, 8)
+  assert.ok(result.every((r, i) => r.sampleStart === i * 512 && r.sampleCount === 512 && r.label === 'original' && r.confidence === 1))
+  assert.throws(() => native.classifyRegion({ startSample: -1, sampleCount: 512 }), /range/)
+  assert.throws(() => native.classifyRegion({ startSample: 0, sampleCount: 1 }), /shorter/)
+  assert.throws(() => native.classifyRegion({ startSample: 0, sampleCount: 512, frameSize: 512 }), /match/)
+  assert.throws(() => native.classifyRegion({ startSample: 0, sampleCount: NaN }), /range/)
+})
+
+test('invalid model dimensions fail without crashing or leaving a loaded classifier', () => {
+  const model = path.join(dir, 'bad-classifier.json')
+  for (const n_components of [-1, 0, 1000000]) {
+    fs.writeFileSync(model, JSON.stringify({ ...classifierModel(), n_components }))
+    assert.equal(native.loadClassifier(model).success, false)
+    assert.throws(() => native.classifyRegion({ startSample: 0, sampleCount: 512 }), /No classifier/)
+  }
+})

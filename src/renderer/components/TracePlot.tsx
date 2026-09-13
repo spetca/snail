@@ -1,9 +1,12 @@
-import React, { useRef, useEffect } from 'react'
+import { PowerTrace } from './PowerTrace'
+import React, { useRef, useEffect, useState } from 'react'
 import { useStore } from '../state/store'
 
 const TRACE_HEIGHT = 100
 
 export function TracePlot(): React.ReactElement {
+  const mode = useStore(s => s.traceMode)
+  const [width, setWidth] = useState(0)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -14,9 +17,17 @@ export function TracePlot(): React.ReactElement {
   const cursors = useStore((s) => s.cursors)
 
   useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    const observer = new ResizeObserver(() => setWidth(container.getBoundingClientRect().width))
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
     const canvas = canvasRef.current
     const container = containerRef.current
-    if (!canvas || !container || !fileInfo) return
+    if (mode !== 'iq' || !canvas || !container || !fileInfo) return
 
     const rect = container.getBoundingClientRect()
     const dpr = window.devicePixelRatio || 1
@@ -126,19 +137,23 @@ export function TracePlot(): React.ReactElement {
         // Silently fail if native addon not ready
       })
     return () => { cancelled = true }
-  }, [fileInfo, scrollOffset, fftSize, zoomLevel, cursors])
+  }, [mode, width, fileInfo, scrollOffset, fftSize, zoomLevel, cursors])
 
   return (
     <div
       ref={containerRef}
       style={{
-        height: TRACE_HEIGHT,
+        flexShrink: 0,
         borderTop: '1px solid var(--border)',
         background: 'var(--bg1)',
         marginRight: 72
       }}
     >
-      <canvas ref={canvasRef} />
+      <div role="group" aria-label="Bottom trace mode" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 6px' }}>
+        <button aria-pressed={mode === 'iq'} onClick={() => useStore.setState({ traceMode: 'iq' })}>I/Q</button>
+        <button aria-pressed={mode === 'power'} onClick={() => useStore.setState({ traceMode: 'power' })}>Absolute power</button>
+      </div>
+      {mode === 'power' ? <PowerTrace width={width} height={TRACE_HEIGHT} /> : <canvas aria-label="I/Q trace" ref={canvasRef} style={{ display: 'block' }} />}
     </div>
   )
 }

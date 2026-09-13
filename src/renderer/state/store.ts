@@ -1,4 +1,4 @@
-import type { EventProject, DetectionRun, DetectionState, EventProposal } from '../../shared/detection'
+import { DEFAULT_DETECTION_CONFIG, type DetectionConfig, type EventProject, DetectionRun, DetectionState, EventProposal } from '../../shared/detection'
 import { readAnnotations, type AnnotationFrequencyMode } from '../../shared/sigmf'
 import { pixelToSample, pixelToFrequency, selectionToPixels, type SignalSelection } from '../utils/selection'
 import { create } from 'zustand'
@@ -20,6 +20,8 @@ export interface AppState {
   loading: boolean
   error: string | null
 
+  traceMode: 'iq' | 'power'
+
   // Spectrogram
   fftSize: number
   zoomLevel: number
@@ -40,6 +42,8 @@ export interface AppState {
   cursors: CursorState
 
   // Machine proposals remain separate from saved annotations.
+  detectionConfig: DetectionConfig
+  proposalsVisible: boolean
   eventProject: EventProject | null
   detectionProgress: DetectionRun | null
   detectionError: string | null
@@ -161,6 +165,7 @@ export interface AppState {
 }
 
 const initialState = {
+  traceMode: 'iq' as 'iq' | 'power',
   fileInfo: null,
   loading: false,
   error: null,
@@ -177,6 +182,8 @@ const initialState = {
   yScrollOffset: 0,
   selection: null as SignalSelection | null,
   cursors: { enabled: false, x1: 0, x2: 0, y1: 0, y2: 0 },
+  detectionConfig: DEFAULT_DETECTION_CONFIG,
+  proposalsVisible: true,
   eventProject: null as EventProject | null,
   detectionProgress: null as DetectionRun | null,
   detectionError: null as string | null,
@@ -253,6 +260,8 @@ export const useStore = create<AppState>((set, get) => ({
       fileInfo: info,
       sampleRate: info?.sampleRate ?? 1000000,
       annotations,
+      detectionConfig: DEFAULT_DETECTION_CONFIG,
+      proposalsVisible: true,
       eventProject: null,
       detectionProgress: null,
       detectionError: null,

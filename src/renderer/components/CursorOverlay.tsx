@@ -1,3 +1,4 @@
+import { matchesEventFilters } from '../../shared/detection'
 import { annotationBands, centerFrequencyAt } from '../../shared/sigmf'
 import React, { useRef, useEffect, useCallback, useState, useMemo } from 'react'
 import { useStore } from '../state/store'
@@ -24,6 +25,9 @@ export function CursorOverlay(): React.ReactElement {
   const annotations = useStore((s) => s.annotations)
   const frequencyMode = useStore((s) => s.annotationFrequencyMode)
   const annotationsVisible = useStore((s) => s.annotationsVisible)
+  const detectionConfig = useStore(s => s.detectionConfig)
+  const proposalsVisible = useStore(s => s.proposalsVisible)
+  const showDetectionPanel = useStore(s => s.showDetectionPanel)
   const eventProject = useStore(s => s.eventProject)
   const selectedProposalId = useStore(s => s.selectedProposalId)
   const classificationResults = useStore((s) => s.classificationResults)
@@ -137,7 +141,7 @@ export function CursorOverlay(): React.ReactElement {
 
     // Proposals use baseband bounds; accepted events appear as SigMF annotations.
     for (const [index, event] of (eventProject?.proposals ?? []).entries()) {
-      if (event.status !== 'proposed') continue
+      if (!showDetectionPanel || !proposalsVisible || event.status !== 'proposed' || !matchesEventFilters(event, fileInfo?.sampleRate ?? sampleRate, detectionConfig)) continue
       let left = Math.max(0, (event.sampleStart - scrollOffset) / samplesPerPx)
       let right = Math.min(rect.width, (event.sampleStart + event.sampleCount - scrollOffset) / samplesPerPx)
       let top = Math.max(0, (0.5 - event.freqUpperEdge / sampleRate - yScrollBins) * yZoomLevel * rect.height)
@@ -314,7 +318,7 @@ export function CursorOverlay(): React.ReactElement {
         ctx.restore()
       }
     }
-  }, [eventProject, selectedProposalId, cursors, annotations, bands, annotationsVisible, classificationResults, fftSize, zoomLevel, sampleRate, scrollOffset, xAxisMode, yZoomLevel, yScrollOffset, hoverTarget, selectedAnnotationIndex, playheadSample, isPlaying, showAbsoluteFrequency, centerFrequency, viewWidth, viewHeight])
+  }, [detectionConfig, proposalsVisible, showDetectionPanel, fileInfo, eventProject, selectedProposalId, cursors, annotations, bands, annotationsVisible, classificationResults, fftSize, zoomLevel, sampleRate, scrollOffset, xAxisMode, yZoomLevel, yScrollOffset, hoverTarget, selectedAnnotationIndex, playheadSample, isPlaying, showAbsoluteFrequency, centerFrequency, viewWidth, viewHeight])
 
   const hitTestTriangle = useCallback((mx: number, my: number): DragTarget => {
     const container = containerRef.current

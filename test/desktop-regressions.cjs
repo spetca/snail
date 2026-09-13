@@ -19,6 +19,7 @@ app.whenReady().then(async () => {
     const snapshot = id => ({recordingId:id,project:structuredClone(window.project),progress:window.snailRun});
     window.datasetJob=null;
     window.snailAPI={
+      classifyRegion: async req => { window.lastClassificationRequest=req; return [] },
       getDatasetState: async () => window.datasetJob,
       exportDataset: async request => {
         window.lastDatasetRequest=request;
@@ -47,7 +48,7 @@ app.whenReady().then(async () => {
           'core:freq_upper_edge':100000000+req.patch.freqUpperEdge,'core:label':req.patch.label}]})};
       },
       sendFFTUpdate(){window.fftUpdates++},sendConstellationUpdate(){},
-      computeFFTTile: async req => new Float32Array(req.fftSize*256).fill(-40),
+      computeFFTTile: async req => { window.lastFFTRequest=req; return new Float32Array(req.fftSize*256).fill(-40) },
       getSamples: async (start,count) => new Float32Array(count*2),
       computeFFT: async ()=>({data:new Float32Array(512),minPower:-120,maxPower:0}) };
     window.store=useStore;
@@ -154,9 +155,13 @@ app.whenReady().then(async () => {
   assert.equal(await js('window.lastResetRevision'), 2)
   assert.equal(await js('window.store.getState().eventProject.proposals.length'), 0)
   assert.equal(await js('window.store.getState().annotations[0].label'), 'test beacon')
-  await js(`document.querySelector('[aria-label=\"Close detection panel\"]').click()`)
-  await js(`window.store.getState().setFileInfo({recordingId:'smoke-B',path:'/smoke-B.cf32',sampleRate:1000000,totalSamples:2000000,fileSize:16000000,format:'cf32'})`)
-  await pause(200)
+  // Keep detection open during successive opens: sibling keys must not collide.
+  for (const id of ['smoke-B', 'smoke-C', 'smoke-D']) {
+    await js(`window.store.getState().setFileInfo({recordingId:'${id}',path:'/${id}.cf32',sampleRate:1000000,totalSamples:2000000,fileSize:16000000,format:'cf32'})`)
+    await pause(150)
+    assert.equal(await js(`document.querySelectorAll('[aria-label="Sample rate (Hz)"]').length`), 1, 'Opening another file must leave exactly one controls panel')
+    assert.equal(await js(`document.querySelectorAll('[aria-label="Detection and review"]').length`), 1)
+  }
   assert.equal(await js('window.store.getState().selection'), null)
   assert.deepEqual(await js('window.errors'), [])
   await js(`window.store.getState().setShowDetectionPanel(true);window.store.setState({cursors:{...window.store.getState().cursors,enabled:false},scrollOffset:500000,zoomLevel:2,yZoomLevel:4,yScrollOffset:80})`)
@@ -178,6 +183,34 @@ app.whenReady().then(async () => {
   await js(`window.store.setState({eventProject:{...window.store.getState().eventProject,proposals:window.store.getState().eventProject.proposals.map(p=>({...p,sampleStart:510000,sampleCount:1,freqLowerEdge:20000,freqUpperEdge:20001}))}})`)
   await pause(100)
   assert.ok(await highlightPixels() >= 16, 'Subpixel candidates must remain visible at the current zoom')
+  await setNumber('Min pulse width (ms)', '1')
+  assert.equal(await highlightPixels(), 0, 'Filtered proposals must not remain on the plot')
+  await setNumber('Min pulse width (ms)', '')
+  assert.ok(await highlightPixels() >= 16)
+  await js(`document.querySelector('[aria-label="Close detection panel"]').click()`)
+  await pause(100)
+  assert.equal(await highlightPixels(), 0, 'Closing review hides unapproved proposals')
+  await js(`window.store.setState({classifierLoaded:true,classifierLabels:['test']})`)
+  await pause(80)
+  await clickText('Classify Current View')
+  assert.equal(await js('window.lastClassificationRequest.startSample'), 500000)
+  assert.equal(await js('window.lastClassificationRequest.sampleCount'), await js('Math.min(2000000,Math.ceil(500000+window.store.getState().viewWidth*256))-500000'))
+  assert.equal(await js('window.lastClassificationRequest.frameSize'), undefined, 'Use the loaded model frame size')
+  await js(`window.store.setState({detectionConfig:{...window.store.getState().detectionConfig,fftSize:1024}})`)
+  await clickText('Absolute power')
+  await pause(200)
+  assert.equal(await js(`document.querySelector('[aria-label="Absolute power trace"]')!==null`), true)
+  assert.equal(await js('window.lastFFTRequest.fftSize'), 1024, 'Power trace must use the detector FFT size')
+  assert.equal(await js('window.lastFFTRequest.stride'), 256, 'Power trace must align with the spectrogram time axis')
+  await js(`(()=>{const c=document.querySelector('[aria-label="Absolute power trace"] canvas');const r=c.getBoundingClientRect();c.dispatchEvent(new MouseEvent('mousemove',{bubbles:true,clientX:r.left+100,clientY:r.top+50}))})()`)
+  await pause(80)
+  assert.ok(await js(`document.querySelector('[aria-label="Absolute power trace"] [role="status"]').textContent.includes('peak -40.0 dB')`))
+  await js(`(()=>{const c=document.querySelector('[aria-label="Absolute power trace"] canvas');const r=c.getBoundingClientRect();c.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:r.left+100,clientY:r.top+50}))})()`)
+  assert.equal(await js('window.store.getState().detectionConfig.thresholdMode'), 'absolute')
+  assert.equal(await js('window.store.getState().detectionConfig.minimumPowerDb'), -45, 'Clicking the midpoint uses the displayed dB scale')
+  await clickText('I/Q')
+  assert.equal(await js(`document.querySelector('[aria-label="Absolute power trace"]')`), null)
+  assert.equal(await js(`document.querySelector('[aria-label="I/Q trace"]')!==null`), true)
   fs.writeFileSync(path.join(dir,'smoke.png'), (await win.webContents.capturePage()).toPNG())
   await js('window.showImportProbe()'); await pause(100)
   await setNumber('Import end (seconds)', '')

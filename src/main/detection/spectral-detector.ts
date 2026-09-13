@@ -1,4 +1,5 @@
-import { matchesEventFilters, type DetectedEvent, type DetectionConfig, type DetectionFrequencyRange } from '../../shared/detection'
+import { spectralNoiseDb } from '../../shared/spectral-power'
+import { matchesEventFilters, type DetectionDiagnostics, type DetectedEvent, type DetectionConfig, type DetectionFrequencyRange } from '../../shared/detection'
 
 interface Run { low: number; high: number; peak: number; strong: boolean }
 interface Track { start: number; end: number; low: number; high: number; peak: number; frames: number; lastFrame: number; counted: number; runs: Run[]; parent?: Track }
@@ -35,6 +36,7 @@ export function detectionBins(fftSize: number, sampleRate: number, range?: Detec
 
 /** Streaming connected spectral regions. State is independent of FFT tile boundaries. */
 export class SpectralDetector {
+  readonly diagnostics: DetectionDiagnostics = { frames: 0, saturatedFrames: 0, regions: 0, rejectedBySupport: 0, rejectedByFilters: 0 }
   private active = new Set<Track>()
   private frame = 0
   private expectedStart: number
@@ -58,13 +60,17 @@ export class SpectralDetector {
 
   private finishTrack(track: Track): void {
     const n = this.config.fftSize
-    if (track.frames < this.config.minFrames || track.high - track.low + 1 < this.config.minBins) return
+    ++this.diagnostics.regions
+    if (track.frames < this.config.minFrames || track.high - track.low + 1 < this.config.minBins) {
+      ++this.diagnostics.rejectedBySupport; return
+    }
     const event: DetectedEvent = { sampleStart: track.start, sampleCount: track.end - track.start,
       freqLowerEdge: Math.max(this.frequencyRange?.low ?? -this.sampleRate / 2, ((track.low - 0.5) / n - 0.5) * this.sampleRate),
       freqUpperEdge: Math.min(this.frequencyRange?.high ?? this.sampleRate / 2, ((track.high + 0.5) / n - 0.5) * this.sampleRate),
       peakAboveNoiseDb: track.peak, frames: track.frames,
       touchesBoundary: track.start === this.rangeStart || track.end === this.rangeEnd }
     if (matchesEventFilters(event, this.sampleRate, this.config)) this.emit(event)
+    else ++this.diagnostics.rejectedByFilters
   }
 
   push(startSample: number, data: Float32Array): void {
@@ -76,10 +82,13 @@ export class SpectralDetector {
       const frame = this.frame++
       const row = data.subarray(offset, offset + n)
       if (row.some(power => !Number.isFinite(power))) throw new Error('Nonfinite power in detector FFT tile')
-      const sorted = Float32Array.from(row.subarray(this.firstBin, this.lastBin + 1)).sort()
-      const noise = (sorted[Math.floor((sorted.length - 1) / 2)] + sorted[Math.floor(sorted.length / 2)]) / 2
+      const noise = spectralNoiseDb(row, this.firstBin, this.lastBin)
       const highThreshold = this.config.thresholdMode === 'absolute' ? this.config.minimumPowerDb : Math.max(this.config.minimumPowerDb, noise + this.config.thresholdDb)
       const lowThreshold = this.config.thresholdMode === 'absolute' ? highThreshold - 4 : Math.max(this.config.minimumPowerDb, noise + this.config.thresholdDb - 4)
+      ++this.diagnostics.frames
+      let above = 0
+      for (let bin = this.firstBin; bin <= this.lastBin; ++bin) if (row[bin] > highThreshold) ++above
+      if (above / (this.lastBin - this.firstBin + 1) >= 0.9) ++this.diagnostics.saturatedFrames
       const runs: Run[] = []
       for (let bin = this.firstBin; bin <= this.lastBin;) {
         if (row[bin] <= lowThreshold) { ++bin; continue }

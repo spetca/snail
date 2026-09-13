@@ -36,6 +36,7 @@ public:
     bool load(const std::string& path, std::string& errorOut);
 
     // True if a model has been loaded successfully.
+    int frameSize() const { return frameSize_; }
     bool loaded() const { return loaded_; }
 
     // Labels of known classes in load order.
@@ -51,6 +52,7 @@ public:
 private:
     bool loaded_ = false;
     int nComponents_ = 0;
+    int frameSize_ = 256;
     std::vector<float> pcaMean_;                   // [15]
     std::vector<std::vector<float>> pcaComponents_; // [n_components][15]
     std::vector<ClassEntry> classes_;

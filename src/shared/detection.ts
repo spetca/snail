@@ -1,6 +1,6 @@
 import type { AnnotationFrequencyMode } from './sigmf'
 
-export const DETECTOR_VERSION = 'spectral-energy-1'
+export const DETECTOR_VERSION = 'spectral-energy-2'
 export interface DetectionConfig {
   thresholdMode?: 'relative' | 'absolute' // omitted in older saved runs: relative
   fftSize: number
@@ -50,7 +50,16 @@ export interface EventProposal extends DetectedEvent {
 }
 export interface DetectionFrequencyRange { low: number; high: number }
 
+export interface DetectionDiagnostics {
+  frames: number
+  saturatedFrames: number
+  regions: number
+  rejectedBySupport: number
+  rejectedByFilters: number
+}
+
 export interface DetectionRun {
+  diagnostics?: DetectionDiagnostics
   frequencyRange?: DetectionFrequencyRange
   id: string
   detectorVersion: string

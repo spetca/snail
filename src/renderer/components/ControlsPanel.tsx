@@ -538,6 +538,8 @@ function ClassifierSection({
     if (!path || !job.isCurrent()) return
     try {
       const res = await window.snailAPI.loadClassifier(path)
+      if (!job.isCurrent()) return
+      useStore.setState({ classifierLoaded: res.success, classifierLabels: res.labels ?? [], classificationResults: [] })
       if (res.success && res.labels) {
         onClassifierLoaded(res.labels)
         setStatusMsg(`Loaded: ${res.labels.join(', ')}`)
@@ -555,27 +557,20 @@ function ClassifierSection({
     setClassifying(true)
     setStatusMsg(null)
     try {
-      const samplesPerPx = Math.max(1, Math.round(fftSize / zoomLevel))
-      let startSample: number, sampleCount: number
-
-      if (cursors.enabled && cursors.x1 !== cursors.x2) {
-        const px1 = Math.min(cursors.x1, cursors.x2)
-        const px2 = Math.max(cursors.x1, cursors.x2)
-        startSample = Math.round(px1 * samplesPerPx + scrollOffset)
-        sampleCount = Math.round((px2 - px1) * samplesPerPx)
-      } else {
-        startSample = 0
-        sampleCount = fileInfo.totalSamples
-      }
-
+      const state = useStore.getState()
+      const stride = Math.max(1, Math.round(fftSize / zoomLevel))
+      const selection = state.cursors.enabled && state.selection?.sample1 !== state.selection?.sample2 ? state.selection : null
+      const startSample = Math.max(0, Math.floor(selection
+        ? Math.min(selection.sample1, selection.sample2) : scrollOffset))
+      const endSample = Math.min(fileInfo.totalSamples, Math.ceil(selection
+        ? Math.max(selection.sample1, selection.sample2) : scrollOffset + state.viewWidth * stride))
+      onClassificationResults([])
       const results = await window.snailAPI.classifyRegion({
-        recordingId: job.recordingId,
-        startSample,
-        sampleCount,
-        frameSize: FRAME_SIZE
+        recordingId: job.recordingId, startSample, sampleCount: endSample - startSample
       })
       if (!job.isCurrent()) return
-      const confident = results.filter((r) => r.confidence >= minConfidence)
+      if (useStore.getState().classifierLabels !== state.classifierLabels) return
+      const confident = results.filter((r) => r.label && Number.isFinite(r.confidence) && r.confidence >= minConfidence)
       onClassificationResults(confident)
       const rejected = results.length - confident.length
       setStatusMsg(`${confident.length} frames above threshold${rejected > 0 ? `, ${rejected} rejected` : ''}`)
@@ -685,7 +680,7 @@ function ClassifierSection({
       {classifierLoaded && (
         <>
           <label style={{ ...labelStyle, marginBottom: 6 }}>
-            Min confidence
+            Min match score
             <input
               type="range"
               min={0}
@@ -702,7 +697,7 @@ function ClassifierSection({
             onClick={handleClassify}
             disabled={classifying}
           >
-            {classifying ? 'Classifying...' : 'Classify Selection'}
+            {classifying ? 'Classifying...' : cursors.enabled && cursors.x1 !== cursors.x2 ? 'Classify Selection' : 'Classify Current View'}
           </button>
         </>
       )}
