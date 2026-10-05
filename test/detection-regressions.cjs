@@ -248,3 +248,20 @@ test('below-noise absolute thresholds report merged activity rejected by size fi
   assert.equal(state.progress.diagnostics.rejectedByFilters, 1)
   assert.equal(fs.existsSync(f.file + '.sigmf-meta'), false)
 })
+
+test('interleaved channels have separate persisted review projects', async t => {
+  const f = fixture(t)
+  f.info.numChannels = 2
+  f.info.channel = 0
+  f.projects.start(f.request)
+  await f.projects.settled()
+  const first = f.projects.state(f.info.recordingId).project
+  const secondInfo = f.session.open(() => ({ ...f.info, channel: 1 }))
+  f.projects.start({ ...f.request, recordingId: secondInfo.recordingId })
+  await f.projects.settled()
+  const second = f.projects.state(secondInfo.recordingId).project
+  assert.notEqual(first.sourceKey, second.sourceKey)
+  assert.equal(first.source.channel, 0)
+  assert.equal(second.source.channel, 1)
+  assert.notEqual(first.proposals[0].id, second.proposals[0].id)
+})

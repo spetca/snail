@@ -31,10 +31,10 @@ export class EventProjects {
     if (info.fileTotal != null && info.fileTotal !== info.totalSamples) {
       throw new Error('Detection requires the full recording to be opened. Reopen without a load window, then choose a cursor or viewport scan range.')
     }
-    const dataPath = fs.realpathSync(metadataPaths(info.path).data)
+    const dataPath = fs.realpathSync(info.dataPath ?? metadataPaths(info.path).data)
     const stat = fs.statSync(dataPath)
     const source = { path: dataPath, size: stat.size, modifiedMs: stat.mtimeMs,
-      totalSamples: info.totalSamples, sampleRate: info.sampleRate, format: info.format }
+      totalSamples: info.totalSamples, sampleRate: info.sampleRate, format: info.format, ...(info.numChannels && info.numChannels > 1 ? { channel: info.channel ?? 0, numChannels: info.numChannels } : {}) }
     return { source, key: hash({ ...source, captures: captureSegments(info) }) }
   }
 

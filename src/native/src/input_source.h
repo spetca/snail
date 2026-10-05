@@ -101,9 +101,12 @@ public:
 
     // viewStart/viewLength limit which samples are visible (0 = use full file)
     void open(const std::string& path, const std::string& format = "",
-              size_t viewStart = 0, size_t viewLength = 0);
+              size_t viewStart = 0, size_t viewLength = 0, size_t channel = 0);
     void close();
 
+    size_t numChannels() const { return numChannels_; }
+    size_t channel() const { return channel_; }
+    const std::string& dataPath() const { return dataPath_; }
     size_t totalSamples() const { return totalSamples_; }
     size_t fullFileSamples() const { return fullFileSamples_; }
     size_t fileSize() const { return fileSize_; }
@@ -132,6 +135,8 @@ private:
     double sampleRate_ = 1000000.0;
     double centerFrequency_ = 0.0;
     std::string sigmfMetaJson_;
+    std::string dataPath_;
+    size_t numChannels_ = 1, channel_ = 0;
 };
 
 // Factory function

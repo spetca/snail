@@ -43,6 +43,21 @@ xattr -cr /Applications/Snail.app
 
 Releases target macOS and Linux only.
 
+## Install from source
+
+With Node.js 20+, npm and Git installed:
+
+```bash
+git clone https://github.com/spetca/snail.git
+cd snail
+./install.sh --install-deps
+npm start
+```
+
+The script installs system dependencies on macOS (Homebrew) or Debian/Ubuntu (apt), installs locked Node dependencies, builds the native DSP addon for Electron, builds the app, and verifies opening a SigMF recording. macOS needs Xcode command-line tools and Homebrew first. If dependencies are already installed, run `./install.sh` or `npm run setup`.
+
+**`npm install` alone does not build the native DSP reader.** Use the installer above for a runnable checkout. See [development instructions](docs/development.md) for prerequisites, other Linux distributions, and troubleshooting.
+
 ## Inspect the signal
 
 Zoom through time and frequency, place cursors around a transmission, and keep the same physical selection while navigating. Measure duration and bandwidth alongside the IQ trace, then inspect spectra, constellation views, or correlation results.
@@ -55,6 +70,14 @@ Zoom through time and frequency, place cursors around a transmission, and keep t
 | Correlation | Investigate repeated patterns and compare recordings |
 | Hop table | Inspect pulse timing and candidate hopping behavior |
 | SigMF annotations | Save reviewed time/frequency regions alongside the recording |
+
+### Adaptive graphics acceleration
+
+The spectrogram can compute FFTs directly on the GPU through WebGL2, across GPU vendors. It checks floating-point capabilities and numerical output, then measures CPU and GPU paths for each FFT size. Unsupported or slower GPU paths use native CPU DSP automatically. No CUDA installation or vendor SDK is required; WebGL2 remains the display requirement.
+
+GPU FFTs currently cover sizes up to 8,192 bins. Larger transforms use native FFTW, and display textures respect the device's maximum texture size. The GPU tile cache is capped at **128 MiB**, with up to **48 MiB** of FFT scratch textures and a separate **32 MiB** CPU tile cache. Display textures use half precision; measurements, detection, and exports keep their existing float32 processing. On devices with smaller texture limits, display bins are combined by their peak power.
+
+Pan and zoom requests prioritize the latest viewport, reuse completed tiles, and draw on animation frames. Waveform reads run in background workers. Brightness, vertical zoom, and cursor movement reuse available data.
 
 ## Look closer with FFT and constellation views
 
@@ -119,7 +142,11 @@ Read the [dataset format and Python examples](docs/dataset-export.md) for detail
 
 ## Recording formats
 
-Snail supports standard **SigMF metadata/data pairs** and these raw sample formats:
+Snail reads **SigMF metadata/data pairs**, **interleaved multichannel recordings**, and **`.sigmf-collection` files**. Use the toolbar's zero-based **Channel** control or collection stream selector to choose the signal to inspect. Sample counts and duration are per channel; analysis and IQ export use that channel. Collections open one recording at a time, with metadata SHA-512 verification, and support both recording objects and legacy tuples.
+
+The reader follows the [SigMF 1.2.6 specification](https://sigmf.org/) for channel interleaving and collections. SigMF byte order is honored for the datatypes below. `core:dataset` can name a raw payload beside its metadata, and `core:offset` is applied to annotation coordinates. Unsupported datatypes and datasets with capture headers or trailing bytes report errors. Archive extraction and simultaneous multi-stream analysis are not implemented. Annotations belong to the recording and are shared across its interleaved channels; review queues are separate per channel. Annotation edits refresh the associated collection's metadata hash.
+
+Supported raw sample formats:
 
 | Samples | Formats |
 | --- | --- |

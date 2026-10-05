@@ -77,7 +77,7 @@ export interface DetectionRun {
 export interface EventProject {
   schemaVersion: 1
   sourceKey: string
-  source: { path: string; size: number; modifiedMs: number; totalSamples: number; sampleRate: number; format: string }
+  source: { channel?: number; numChannels?: number; path: string; size: number; modifiedMs: number; totalSamples: number; sampleRate: number; format: string }
   revision: number
   proposals: EventProposal[]
   runs: DetectionRun[]

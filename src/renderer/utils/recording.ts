@@ -1,5 +1,5 @@
 import { useStore } from '../state/store'
-import type { SampleFormat } from '../../shared/sample-formats'
+import type { SampleFormat, OpenOptions } from '../../shared/sample-formats'
 
 export function recordingJob(recordingId = useStore.getState().fileInfo?.recordingId) {
   const isCurrent = () => !!recordingId && useStore.getState().fileInfo?.recordingId === recordingId
@@ -13,13 +13,13 @@ export function recordingJob(recordingId = useStore.getState().fileInfo?.recordi
 }
 
 let openGeneration = 0
-export async function openRecording(path: string, format?: SampleFormat, initialScroll = 0): Promise<void> {
+export async function openRecording(path: string, format?: SampleFormat, initialScroll = 0, opts?: OpenOptions): Promise<void> {
   const generation = ++openGeneration
   const state = useStore.getState()
   state.setLoading(true)
   state.setError(null)
   try {
-    const info = await window.snailAPI.openFile(path, format)
+    const info = await window.snailAPI.openFile(path, format, opts)
     if (generation === openGeneration) state.setFileInfo(info, initialScroll)
   } catch (error) {
     if (generation === openGeneration) state.setError(error instanceof Error ? error.message : String(error))

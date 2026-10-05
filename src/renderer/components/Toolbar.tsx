@@ -1,3 +1,4 @@
+import { openRecording } from '../utils/recording'
 import React from 'react'
 import { useStore } from '../state/store'
 
@@ -56,6 +57,20 @@ export function Toolbar({ onExport, onAnnotate, onOpen, onHopTable }: ToolbarPro
 
       {fileInfo && (
         <>
+          {fileInfo.collection && <select aria-label="Collection stream" value={fileInfo.collection.streamIndex}
+            style={{ WebkitAppRegion: 'no-drag', maxWidth: 220 }}
+            onChange={e => void openRecording(fileInfo.collection!.path, undefined, 0, { streamIndex: Number(e.target.value) })}>
+            {fileInfo.collection.streams.map((stream, i) => <option key={i} value={i}>{stream.name}</option>)}
+          </select>}
+          {(fileInfo.numChannels ?? 1) > 1 && <label style={{ WebkitAppRegion: 'no-drag' }}>Channel{' '}
+            <input aria-label="Channel" type="number" min={0} max={fileInfo.numChannels! - 1}
+              style={{ width: 65 }} value={fileInfo.channel ?? 0} onChange={e => {
+                const channel = e.target.valueAsNumber
+                if (Number.isInteger(channel) && channel >= 0 && channel < fileInfo.numChannels!)
+                  void openRecording(fileInfo.collection?.path ?? fileInfo.path, undefined, 0,
+                    { channel, streamIndex: fileInfo.collection?.streamIndex })
+              }} /> / {fileInfo.numChannels! - 1}
+          </label>}
           <button onClick={onExport} style={{ WebkitAppRegion: 'no-drag' } as any}>Export SigMF</button>
           {cursors.enabled && (
             <button onClick={onAnnotate} style={{ WebkitAppRegion: 'no-drag' } as any}>Annotate</button>

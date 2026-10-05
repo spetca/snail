@@ -1,4 +1,5 @@
 #include <napi.h>
+#include <cmath>
 #include "input_source.h"
 #include "fft_engine.h"
 #include "spectrogram_worker.h"
@@ -26,9 +27,18 @@ Napi::Value OpenFile(const Napi::CallbackInfo& info) {
         format = info[1].As<Napi::String>().Utf8Value();
     }
 
-    size_t viewStart = 0, viewLength = 0;
+    size_t viewStart = 0, viewLength = 0, channel = 0;
     if (info.Length() > 2 && info[2].IsObject()) {
         auto opts = info[2].As<Napi::Object>();
+        if (opts.Has("channel")) {
+            const auto value = opts.Get("channel");
+            const double number = value.IsNumber() ? value.As<Napi::Number>().DoubleValue() : -1;
+            if (!std::isfinite(number) || number < 0 || std::floor(number) != number || number > 9007199254740991.0) {
+                Napi::Error::New(env, "Invalid channel index").ThrowAsJavaScriptException();
+                return env.Undefined();
+            }
+            channel = static_cast<size_t>(number);
+        }
         if (opts.Has("viewStart") && opts.Get("viewStart").IsNumber())
             viewStart = static_cast<size_t>(opts.Get("viewStart").As<Napi::Number>().DoubleValue());
         if (opts.Has("viewLength") && opts.Get("viewLength").IsNumber())
@@ -38,7 +48,7 @@ Napi::Value OpenFile(const Napi::CallbackInfo& info) {
     try {
         // Publish only a successfully opened source. Pending workers retain their mapping.
         auto nextSource = std::make_shared<InputSource>();
-        nextSource->open(path, format, viewStart, viewLength);
+        nextSource->open(path, format, viewStart, viewLength, channel);
         g_source = std::move(nextSource);
     } catch (const std::exception& e) {
         Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
@@ -47,6 +57,9 @@ Napi::Value OpenFile(const Napi::CallbackInfo& info) {
 
     auto result = Napi::Object::New(env);
     result.Set("path", Napi::String::New(env, path));
+    result.Set("numChannels", Napi::Number::New(env, g_source->numChannels()));
+    result.Set("channel", Napi::Number::New(env, g_source->channel()));
+    result.Set("dataPath", Napi::String::New(env, g_source->dataPath()));
     result.Set("format", Napi::String::New(env, g_source->format()));
     result.Set("sampleRate", Napi::Number::New(env, g_source->sampleRate()));
     result.Set("totalSamples", Napi::Number::New(env, static_cast<double>(g_source->totalSamples())));
@@ -113,6 +126,61 @@ Napi::Value GetSamples(const Napi::CallbackInfo& info) {
 
     return result;
 }
+
+// Background sample reads keep page faults and envelope scans off Electron's main thread.
+class SampleReadWorker : public Napi::AsyncWorker {
+    Napi::Promise::Deferred deferred_;
+    std::shared_ptr<const InputSource> source_;
+    size_t start_, count_, stride_, window_;
+    std::vector<std::complex<float>> samples_;
+public:
+    SampleReadWorker(Napi::Env env, Napi::Promise::Deferred deferred, std::shared_ptr<const InputSource> source,
+                     size_t start, size_t count, size_t stride, size_t window = 0)
+        : Napi::AsyncWorker(env), deferred_(deferred), source_(source), start_(start), count_(count), stride_(stride), window_(window) {}
+    void Execute() override {
+        try {
+            const size_t total = source_->totalSamples();
+            const size_t rows = start_ >= total ? 0 : std::min(count_, (total - start_ - 1) / stride_ + 1);
+            samples_.resize(rows * (window_ ? window_ : 1));
+            if (window_) {
+                for (size_t row = 0; row < rows; ++row)
+                    source_->getSamples(start_ + row * stride_, window_, samples_.data() + row * window_);
+            } else if (rows) {
+                source_->getSamplesDetected(start_, rows, stride_, samples_.data());
+            }
+        } catch (const std::exception& error) { SetError(error.what()); }
+    }
+    void OnOK() override {
+        auto result = Napi::Float32Array::New(Env(), samples_.size() * 2);
+        std::memcpy(result.Data(), samples_.data(), samples_.size() * sizeof(std::complex<float>));
+        deferred_.Resolve(result);
+    }
+    void OnError(const Napi::Error& error) override { deferred_.Reject(error.Value()); }
+};
+
+Napi::Value ReadSamplesAsync(const Napi::CallbackInfo& info, bool tile) {
+    auto env = info.Env();
+    auto integer = [&](size_t index, double maximum) {
+        if (info.Length() <= index || !info[index].IsNumber()) throw std::runtime_error("Invalid sample read");
+        double n = info[index].As<Napi::Number>().DoubleValue();
+        if (!std::isfinite(n) || n < 0 || n > maximum || std::floor(n) != n) throw std::runtime_error("Invalid sample read");
+        return static_cast<size_t>(n);
+    };
+    try {
+        const size_t start = integer(0, 9007199254740991.0);
+        const size_t count = integer(1, tile ? 8192 : 4194304);
+        const size_t stride = integer(2, 9007199254740991.0);
+        if (!stride || (tile && (count < 4 || (count & (count - 1))))) throw std::runtime_error("Invalid sample read");
+        auto deferred = Napi::Promise::Deferred::New(env);
+        (new SampleReadWorker(env, deferred, g_source, start, tile ? 256 : count, stride, tile ? count : 0))->Queue();
+        return deferred.Promise();
+    } catch (const std::exception& error) {
+        Napi::Error::New(env, error.what()).ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+}
+Napi::Value GetSamplesAsync(const Napi::CallbackInfo& info) { return ReadSamplesAsync(info, false); }
+Napi::Value ReadFFTTile(const Napi::CallbackInfo& info) { return ReadSamplesAsync(info, true); }
 
 // ── computeFFTTile(startSample, fftSize, stride) -> Promise<Float32Array> ──
 
@@ -729,6 +797,8 @@ Napi::Value FindPulses(const Napi::CallbackInfo& info) {
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set("openFile", Napi::Function::New(env, OpenFile));
+    exports.Set("getSamplesAsync", Napi::Function::New(env, GetSamplesAsync));
+    exports.Set("readFFTTile", Napi::Function::New(env, ReadFFTTile));
     exports.Set("getSamples", Napi::Function::New(env, GetSamples));
     exports.Set("computeFFTTile", Napi::Function::New(env, ComputeFFTTile));
     exports.Set("exportSigMF", Napi::Function::New(env, ExportSigMF));

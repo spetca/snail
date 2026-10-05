@@ -1,8 +1,9 @@
 import React, { useRef, useEffect, useCallback, useState } from 'react'
 import { useStore } from '../state/store'
-import { SpectrogramRenderer, TILE_LINES } from '../webgl/SpectrogramRenderer'
+import { SpectrogramRenderer, TILE_LINES, type RenderParams } from '../webgl/SpectrogramRenderer'
 
-const MAX_CONCURRENT_TILES = 4
+import { TileScheduler } from '../webgl/TileScheduler'
+import type { FFTTileRequest } from '../../shared/sample-formats'
 
 export function SpectrogramView({ children }: { children?: React.ReactNode }): React.ReactElement {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -10,7 +11,16 @@ export function SpectrogramView({ children }: { children?: React.ReactNode }): R
   const containerRef = useRef<HTMLDivElement>(null)
   // Track size as state so changes trigger re-render
   const [viewSize, setViewSize] = useState({ width: 0, height: 0 })
-  const generationRef = useRef(0)
+  const schedulerRef = useRef<TileScheduler<{ key: string; request: FFTTileRequest }> | null>(null)
+  const paramsRef = useRef<RenderParams | null>(null)
+  const frameRef = useRef<number | null>(null)
+  const scheduleDraw = useCallback(() => {
+    if (frameRef.current !== null) return
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = null
+      if (paramsRef.current) rendererRef.current?.render(paramsRef.current)
+    })
+  }, [])
   const [rendererRevision, setRendererRevision] = useState(0)
   const [renderError, setRenderError] = useState<string | null>(null)
 
@@ -39,7 +49,7 @@ export function SpectrogramView({ children }: { children?: React.ReactNode }): R
 
     const lost = (event: Event) => {
       event.preventDefault()
-      ++generationRef.current
+      schedulerRef.current?.dispose()
       setLoading(false)
       setRenderError('The graphics context was lost. Waiting for recovery; you can also retry below.')
     }
@@ -50,15 +60,24 @@ export function SpectrogramView({ children }: { children?: React.ReactNode }): R
       const renderer = new SpectrogramRenderer(canvas)
       rendererRef.current = renderer
       renderer.resize(canvas.width, canvas.height)
+      schedulerRef.current = new TileScheduler(key => renderer.hasTile(key),
+        task => renderer.loadTile(task.key, task.request), error => {
+          if (error) setRenderError(`Could not load spectrogram samples: ${String(error)}`)
+          scheduleDraw()
+          setLoading(false)
+        })
       setRenderError(null)
     } catch (e) {
       setRenderError(`Cannot initialize the spectrogram: ${String(e)}`)
     }
 
     return () => {
-      ++generationRef.current
       canvas.removeEventListener('webglcontextlost', lost)
       canvas.removeEventListener('webglcontextrestored', restored)
+      schedulerRef.current?.dispose()
+      schedulerRef.current = null
+      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current)
+      frameRef.current = null
       rendererRef.current?.dispose()
       rendererRef.current = null
     }
@@ -88,116 +107,30 @@ export function SpectrogramView({ children }: { children?: React.ReactNode }): R
     return () => observer.disconnect()
   }, [])
 
-  // Reset on new file: clear old tiles so stale GPU data isn't shown
-  // Do NOT auto-fit zoom/scroll here — store.setFileInfo already sets the
-  // initial position. Auto-fitting the whole file causes random mmap reads
-  // spread across large files (page-fault storm) and visible hangs.
-  const fittedFileRef = useRef<string | null>(null)
-  const initialLoadRef = useRef(false)
+  // Drawing controls never invalidate FFT requests. Pan/zoom only replace queued work.
   useEffect(() => {
-    if (!fileInfo || viewSize.width === 0) return
-    const fileKey = `${fileInfo.path}_${fileInfo.totalSamples}`
-    if (fittedFileRef.current === fileKey) return
-    fittedFileRef.current = fileKey
-    initialLoadRef.current = true
-    rendererRef.current?.clearTiles()
-    generationRef.current++
-  }, [fileInfo, viewSize.width])
+    if (!fileInfo || !viewSize.width) return
+    paramsRef.current = { scrollOffset, fftSize, stride, powerMin, powerMax,
+      totalSamples: fileInfo.totalSamples, yZoomLevel, yScrollOffset: yScrollOffset / (fftSize / 2) }
+    scheduleDraw()
+  }, [fileInfo, fftSize, stride, powerMin, powerMax, scrollOffset, viewSize, yZoomLevel, yScrollOffset, rendererRevision, scheduleDraw])
 
-  // Render spectrogram
   useEffect(() => {
-    if (!fileInfo || !rendererRef.current) return
-    if (viewSize.width === 0) return
-
-    const renderer = rendererRef.current
-    const tileSampleCoverage = TILE_LINES * stride
-    const totalViewSamples = viewSize.width * stride
-
-    const visibleStart = scrollOffset
-    const visibleEnd = visibleStart + totalViewSamples
-
-    const firstTileIdx = Math.floor(visibleStart / tileSampleCoverage)
-    const lastTileIdx = Math.ceil(visibleEnd / tileSampleCoverage)
-
-    const generation = ++generationRef.current
-
-    const renderParams = {
-      scrollOffset,
-      fftSize,
-      stride,
-      powerMin,
-      powerMax,
-      totalSamples: fileInfo.totalSamples,
-      yZoomLevel,
-      yScrollOffset: yScrollOffset / (fftSize / 2)
+    if (!fileInfo || !viewSize.width || !schedulerRef.current) return
+    const coverage = TILE_LINES * stride
+    const end = Math.min(fileInfo.totalSamples, scrollOffset + viewSize.width * stride)
+    const tasks: { key: string; request: FFTTileRequest }[] = []
+    for (let i = Math.floor(scrollOffset / coverage); i < Math.ceil(end / coverage); ++i) {
+      const startSample = i * coverage
+      if (startSample < 0) continue
+      tasks.push({ key: `${startSample}_${fftSize}_${stride}`,
+        request: { recordingId: fileInfo.recordingId, startSample, fftSize, stride } })
     }
-
-    // Always render immediately with cached tiles
-    renderer.render(renderParams)
-
-    const loadTiles = async () => {
-      const needed: { tileKey: string; tileSampleStart: number }[] = []
-
-      for (let tIdx = firstTileIdx; tIdx <= lastTileIdx; tIdx++) {
-        const tileSampleStart = tIdx * tileSampleCoverage
-        if (tileSampleStart < 0) continue
-        // Skip tiles that start beyond the file
-        if (tileSampleStart >= fileInfo.totalSamples) break
-
-        const tileKey = `${tileSampleStart}_${fftSize}_${stride}`
-        if (renderer.hasTile(tileKey)) continue
-        needed.push({ tileKey, tileSampleStart })
-      }
-
-      if (needed.length === 0) {
-        if (initialLoadRef.current) { initialLoadRef.current = false; setLoading(false) }
-        return
-      }
-
-      if (initialLoadRef.current) setLoading(true)
-      for (let i = 0; i < needed.length; i += MAX_CONCURRENT_TILES) {
-        if (generationRef.current !== generation) return
-
-        const batch = needed.slice(i, i + MAX_CONCURRENT_TILES)
-        await Promise.all(batch.map(({ tileKey, tileSampleStart }) =>
-          window.snailAPI.computeFFTTile({
-            recordingId: fileInfo.recordingId,
-            startSample: tileSampleStart,
-            fftSize,
-            stride
-          }).then((rawData) => {
-            if (generationRef.current !== generation) return
-            if (!rawData) return
-
-            let data: Float32Array
-            const dataObj = rawData as any
-            if (dataObj instanceof Float32Array) {
-              data = dataObj
-            } else if (dataObj instanceof ArrayBuffer) {
-              data = new Float32Array(dataObj)
-            } else if (dataObj.buffer instanceof ArrayBuffer) {
-              data = new Float32Array(dataObj.buffer)
-            } else {
-              data = new Float32Array(dataObj)
-            }
-            if (data.length > 0) {
-              renderer.uploadTile(tileKey, data, fftSize)
-            }
-          }).catch((error) => {
-            if (generationRef.current === generation) setRenderError(`Could not load spectrogram samples: ${String(error)}`)
-          })
-        ))
-
-        if (generationRef.current === generation) {
-          renderer.render(renderParams)
-        }
-      }
-      if (generationRef.current === generation && initialLoadRef.current) { initialLoadRef.current = false; setLoading(false) }
-    }
-
-    loadTiles()
-    return () => { ++generationRef.current }
-  }, [fileInfo, fftSize, stride, powerMin, powerMax, scrollOffset, viewSize, yZoomLevel, yScrollOffset, rendererRevision])
+    const center = (scrollOffset + end) / 2
+    tasks.sort((a, b) => Math.abs(a.request.startSample + coverage / 2 - center) - Math.abs(b.request.startSample + coverage / 2 - center))
+    schedulerRef.current.update(tasks)
+    if (tasks.every(task => rendererRef.current?.hasTile(task.key))) setLoading(false)
+  }, [fileInfo, fftSize, stride, scrollOffset, viewSize.width, rendererRevision, setLoading])
 
   // Min zoom: enough to fit all samples in the viewport
   const minZoom = fileInfo && viewSize.width > 0

@@ -1,3 +1,4 @@
+import { useLatestSamples } from '../hooks/useLatestSamples'
 import { PowerTrace } from './PowerTrace'
 import React, { useRef, useEffect, useState } from 'react'
 import { useStore } from '../state/store'
@@ -24,6 +25,11 @@ export function TracePlot(): React.ReactElement {
     return () => observer.disconnect()
   }, [])
 
+  const samplesPerPixel = fftSize / zoomLevel
+  const stride = Math.max(1, Math.round(samplesPerPixel))
+  const samplesToRequest = stride > 1 ? Math.ceil(width) + 2 : Math.ceil(width * samplesPerPixel)
+  const samples = useLatestSamples(fileInfo?.recordingId, scrollOffset, samplesToRequest, stride, mode === 'iq')
+
   useEffect(() => {
     const canvas = canvasRef.current
     const container = containerRef.current
@@ -46,23 +52,7 @@ export function TracePlot(): React.ReactElement {
     ctx.fillStyle = '#0a0e14'
     ctx.fillRect(0, 0, rect.width, TRACE_HEIGHT)
 
-    const samplesPerPixel = fftSize / zoomLevel
-    const stride = Math.max(1, Math.round(samplesPerPixel))
-    const start = scrollOffset
-
-    // We request enough valid samples to fill the screen width
-    // If stride > 1, we get 1 sample per pixel (approx)
-    // If stride == 1, we get samplesPerPixel samples per pixel
-    const samplesToRequest = stride > 1
-      ? Math.ceil(rect.width) + 2
-      : Math.ceil(rect.width * samplesPerPixel)
-
-    // Load samples and draw
-    let cancelled = false
-    window.snailAPI.getSamples(start, samplesToRequest, stride, fileInfo.recordingId)
-      .then((samples) => {
-        if (cancelled) return
-        if (!samples || samples.length === 0) return
+    if (!samples || samples.length === 0) return
 
         const midY = TRACE_HEIGHT / 2
         const scale = TRACE_HEIGHT / 4
@@ -132,12 +122,8 @@ export function TracePlot(): React.ReactElement {
         ctx.fillText('I', 6, 14)
         ctx.fillStyle = '#4dabf7'
         ctx.fillText('Q', 6, 28)
-      })
-      .catch(() => {
-        // Silently fail if native addon not ready
-      })
-    return () => { cancelled = true }
-  }, [mode, width, fileInfo, scrollOffset, fftSize, zoomLevel, cursors])
+  }, [mode, width, fileInfo, samples, samplesPerPixel, stride, cursors])
+
 
   return (
     <div

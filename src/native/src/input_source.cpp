@@ -9,6 +9,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <memory>
+#include <filesystem>
+#include <limits>
 
 #include <nlohmann/json.hpp>
 
@@ -140,6 +142,33 @@ std::unique_ptr<SampleAdapter> createAdapter(const std::string& fmt) {
     return std::make_unique<ComplexF32Adapter>(); // default
 }
 
+// Wrap the scalar adapter so every DSP consumer sees one channel in sample-frame units.
+class InterleavedAdapter : public SampleAdapter {
+    std::unique_ptr<SampleAdapter> base_;
+    size_t channels_, channel_, componentBytes_;
+    bool swap_;
+public:
+    InterleavedAdapter(std::unique_ptr<SampleAdapter> base, size_t channels, size_t channel,
+                       size_t componentBytes, bool swap)
+        : base_(std::move(base)), channels_(channels), channel_(channel), componentBytes_(componentBytes), swap_(swap) {}
+    size_t sampleSize() const override { return base_->sampleSize() * channels_; }
+    void copyRange(const void* src, size_t start, size_t length, std::complex<float>* dest) const override {
+        if (channels_ == 1 && !swap_) { base_->copyRange(src, start, length, dest); return; }
+        for (size_t i = 0; i < length; ++i) {
+            const auto bytes = static_cast<const unsigned char*>(src) +
+                ((start + i) * channels_ + channel_) * base_->sampleSize();
+            // Also align potentially unaligned input before typed adapter reads.
+            alignas(16) unsigned char sample[16];
+            std::memcpy(sample, bytes, base_->sampleSize());
+            if (swap_) {
+                for (size_t j = 0; j < base_->sampleSize(); j += componentBytes_)
+                    std::reverse(sample + j, sample + j + componentBytes_);
+            }
+            base_->copyRange(sample, 0, 1, dest + i);
+        }
+    }
+};
+
 // ── InputSource ───────────────────────────────────────────────────
 
 InputSource::InputSource() = default;
@@ -161,11 +190,18 @@ void InputSource::close() {
     totalSamples_ = 0;
     fullFileSamples_ = 0;
     viewOffset_ = 0;
+    numChannels_ = 1;
+    channel_ = 0;
+    sigmfMetaJson_.clear();
+    sampleRate_ = 1000000;
+    centerFrequency_ = 0;
+    dataPath_.clear();
 }
 
 void InputSource::open(const std::string& path, const std::string& overrideFormat,
-                       size_t viewStart, size_t viewLength) {
+                       size_t viewStart, size_t viewLength, size_t channel) {
     close();
+    channel_ = channel;
 
     // Detect format from extension or override
     detectFormat(path, overrideFormat);
@@ -188,6 +224,10 @@ void InputSource::open(const std::string& path, const std::string& overrideForma
         }
     }
 
+    if (channel_ >= numChannels_) throw std::runtime_error("Channel index is outside this recording");
+    if (!dataPath_.empty()) dataPath = dataPath_;
+    dataPath_ = dataPath;
+
     // Open and mmap the data file
     fd_ = ::open(dataPath.c_str(), O_RDONLY);
     if (fd_ < 0) {
@@ -202,6 +242,8 @@ void InputSource::open(const std::string& path, const std::string& overrideForma
     }
 
     fileSize_ = st.st_size;
+    if (!sigmfMetaJson_.empty() && fileSize_ % adapter_->sampleSize() != 0)
+        throw std::runtime_error("SigMF data ends with an incomplete sample frame");
     fullFileSamples_ = fileSize_ / adapter_->sampleSize();
 
     mmapData_ = mmap(nullptr, fileSize_, PROT_READ, MAP_PRIVATE, fd_, 0);
@@ -300,54 +342,59 @@ void InputSource::createAdapter() {
 
 void InputSource::parseSigMF(const std::string& metaPath) {
     std::ifstream file(metaPath);
-    if (!file.good()) return;
+    if (!file.good()) throw std::runtime_error("Cannot open SigMF metadata: " + metaPath);
 
     std::string content((std::istreambuf_iterator<char>(file)),
                         std::istreambuf_iterator<char>());
     sigmfMetaJson_ = content;
 
-    try {
-        auto meta = json::parse(content);
-
-        // Parse datatype from global
-        if (meta.contains("global") && meta["global"].contains("core:datatype")) {
-            std::string dt = meta["global"]["core:datatype"];
-            // Map SigMF datatypes to our format codes
-            static const std::unordered_map<std::string, std::string> dtMap = {
-                {"cf32_le", "cf32"}, {"cf32_be", "cf32"},
-                {"cf64_le", "cf64"}, {"cf64_be", "cf64"},
-                {"ci32_le", "cs32"}, {"ci32_be", "cs32"},
-                {"ci16_le", "cs16"}, {"ci16_be", "cs16"},
-                {"ci8", "cs8"},
-                {"cu8", "cu8"},
-                {"rf32_le", "rf32"}, {"rf32_be", "rf32"},
-                {"rf64_le", "rf64"}, {"rf64_be", "rf64"},
-                {"ri16_le", "rs16"}, {"ri16_be", "rs16"},
-                {"ri8", "rs8"},
-                {"ru8", "ru8"}
-            };
-            auto it = dtMap.find(dt);
-            if (it != dtMap.end()) {
-                format_ = it->second;
-                createAdapter();
-            }
-        }
-
-        // Parse sample rate
-        if (meta.contains("global") && meta["global"].contains("core:sample_rate")) {
-            sampleRate_ = meta["global"]["core:sample_rate"].get<double>();
-        }
-
-        // Parse center frequency from captures
-        if (meta.contains("captures") && meta["captures"].is_array() && !meta["captures"].empty()) {
-            auto& cap = meta["captures"][0];
-            if (cap.contains("core:frequency")) {
-                centerFrequency_ = cap["core:frequency"].get<double>();
-            }
-        }
-    } catch (const json::exception&) {
-        // Invalid JSON, continue with defaults
+    auto meta = json::parse(content);
+    const auto& global = meta.at("global");
+    const auto channels = global.value("core:num_channels", json(1));
+    if (!channels.is_number_integer() || channels.get<double>() < 1 ||
+        channels.get<double>() > 9007199254740991.0)
+        throw std::runtime_error("Invalid SigMF core:num_channels");
+    numChannels_ = channels.get<size_t>();
+    const std::string dt = global.at("core:datatype").get<std::string>();
+    static const std::unordered_map<std::string, std::string> dtMap = {
+        {"cf32_le", "cf32"}, {"cf32_be", "cf32"}, {"cf64_le", "cf64"}, {"cf64_be", "cf64"},
+        {"ci32_le", "cs32"}, {"ci32_be", "cs32"}, {"ci16_le", "cs16"}, {"ci16_be", "cs16"},
+        {"ci8", "cs8"}, {"cu8", "cu8"}, {"rf32_le", "rf32"}, {"rf32_be", "rf32"},
+        {"rf64_le", "rf64"}, {"rf64_be", "rf64"}, {"ri16_le", "rs16"}, {"ri16_be", "rs16"},
+        {"ri8", "rs8"}, {"ru8", "ru8"}
+    };
+    const auto it = dtMap.find(dt);
+    if (it == dtMap.end()) throw std::runtime_error("Unsupported SigMF datatype: " + dt);
+    format_ = it->second;
+    createAdapter();
+    if (numChannels_ > std::numeric_limits<size_t>::max() / adapter_->sampleSize())
+        throw std::runtime_error("SigMF sample frame is too large");
+    const size_t componentBytes = adapter_->sampleSize() / (dt[0] == 'c' ? 2 : 1);
+    const uint16_t endianTest = 1;
+    const bool littleEndian = *reinterpret_cast<const uint8_t*>(&endianTest) == 1;
+    const bool swap = componentBytes > 1 && (littleEndian != (dt.substr(dt.size() - 3) == "_le"));
+    adapter_ = std::make_unique<InterleavedAdapter>(std::move(adapter_), numChannels_, channel_, componentBytes, swap);
+    if (global.contains("core:sample_rate")) {
+        sampleRate_ = global.at("core:sample_rate").get<double>();
+        if (!std::isfinite(sampleRate_) || sampleRate_ <= 0) throw std::runtime_error("Invalid SigMF sample rate");
     }
+    if (global.value("core:trailing_bytes", 0) != 0)
+        throw std::runtime_error("SigMF datasets with trailing bytes are not supported");
+    if (global.contains("core:dataset")) {
+        const auto name = global.at("core:dataset").get<std::string>();
+        if (name.empty() || name == "." || name == ".." || name.find_first_of("/\\") != std::string::npos)
+            throw std::runtime_error("SigMF core:dataset must be a filename in the metadata directory");
+        dataPath_ = (std::filesystem::path(metaPath).parent_path() / name).string();
+    }
+    if (meta.contains("captures")) {
+        for (const auto& capture : meta.at("captures")) {
+            if (capture.value("core:header_bytes", 0) != 0)
+                throw std::runtime_error("SigMF datasets with capture headers are not supported");
+        }
+        if (!meta.at("captures").empty())
+            centerFrequency_ = meta.at("captures")[0].value("core:frequency", 0.0);
+    }
+
 }
 
 void InputSource::getSamplesDetected(size_t start, size_t length, size_t stride, std::complex<float>* dest) const {
@@ -360,7 +407,7 @@ void InputSource::getSamplesDetected(size_t start, size_t length, size_t stride,
         return;
     }
 
-    std::vector<std::complex<float>> buffer(stride);
+    std::vector<std::complex<float>> buffer(std::min(stride, size_t(65536)));
 
     for (size_t i = 0; i < length; i++) {
         size_t blockStart = start + i * stride;
@@ -375,17 +422,15 @@ void InputSource::getSamplesDetected(size_t start, size_t length, size_t stride,
             blockLen = totalSamples_ - blockStart;
         }
 
-        adapter_->copyRange(mmapData_, viewOffset_ + blockStart, blockLen, buffer.data());
-
         float maxMag = -1.0f;
         std::complex<float> maxSample(0.0f, 0.0f);
-
-        for (size_t j = 0; j < blockLen; j++) {
-            // L1 norm approximation for speed: |I| + |Q|
-            float mag = std::abs(buffer[j].real()) + std::abs(buffer[j].imag());
-            if (mag > maxMag) {
-                maxMag = mag;
-                maxSample = buffer[j];
+        // A zoomed-out pixel may span gigabytes. Keep scratch memory bounded.
+        for (size_t offset = 0; offset < blockLen; offset += buffer.size()) {
+            const size_t count = std::min(buffer.size(), blockLen - offset);
+            adapter_->copyRange(mmapData_, viewOffset_ + blockStart + offset, count, buffer.data());
+            for (size_t j = 0; j < count; j++) {
+                float mag = std::abs(buffer[j].real()) + std::abs(buffer[j].imag());
+                if (mag > maxMag) { maxMag = mag; maxSample = buffer[j]; }
             }
         }
         dest[i] = maxSample;

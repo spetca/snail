@@ -255,7 +255,7 @@ test('new raw-IQ sidecar describes the actual datatype, sample rate, and dataset
   try {
     const info = { ...file(), path: path.join(dir, 'raw.cs16'), format: 'cs16', sampleRate: 2000000 }
     const meta = JSON.parse(saveAnnotationMetadata(info, { sampleStart: 2, sampleCount: 10 }, 'rf'))
-    assert.equal(meta.global['core:datatype'], 'cs16_le')
+    assert.equal(meta.global['core:datatype'], 'ci16_le')
     assert.equal(meta.global['core:sample_rate'], 2000000)
     assert.equal(meta.global['core:dataset'], 'raw.cs16')
     assert.equal(meta.annotations[0]['core:sample_start'], 2)
@@ -286,4 +286,121 @@ test('invalid sample rates and correlation lengths cannot enter the store; power
   assert.equal(useStore.getState().tu, tu); assert.equal(useStore.getState().cpLen, cp)
   s.setPowerMin(100); assert.ok(useStore.getState().powerMin < useStore.getState().powerMax)
   s.setPowerMax(-200); assert.ok(useStore.getState().powerMin < useStore.getState().powerMax)
+})
+
+const { resolveRecording, probeRecording } = require('../src/main/sigmf-files.ts')
+const crypto = require('node:crypto')
+function collectionFixture(run) {
+  const path = require('node:path'), os = require('node:os')
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'snail-collection-'))
+  const entries = ['first', 'second'].map((name, index) => {
+    const meta = JSON.stringify({ global: { 'core:datatype': 'ci16_le', 'core:num_channels': 2,
+      'core:sample_rate': 8000, 'core:version': '1.2.6', 'core:collection': 'set' }, captures: [], annotations: [] })
+    fs.writeFileSync(path.join(dir, name + '.sigmf-meta'), meta)
+    fs.writeFileSync(path.join(dir, name + '.sigmf-data'), Buffer.alloc((index + 1) * 80))
+    return { name, hash: crypto.createHash('sha512').update(meta).digest('hex') }
+  })
+  const file = path.join(dir, 'set.sigmf-collection')
+  const write = streams => fs.writeFileSync(file, JSON.stringify({ collection: { 'core:version': '1.2.6', 'core:streams': streams } }))
+  write(entries)
+  try { run({ file, entries, write, dir, path }) } finally { fs.rmSync(dir, { recursive: true, force: true }) }
+}
+
+test('collection objects and legacy tuples resolve recordings; probes use data bytes and channel frames', () => {
+  collectionFixture(({ file, entries, write, path, dir }) => {
+    assert.equal(resolveRecording(file).path, path.join(dir, 'first.sigmf-meta'))
+    assert.equal(resolveRecording(file, { streamIndex: 1 }).path, path.join(dir, 'second.sigmf-meta'))
+    const probe = probeRecording(file)
+    assert.equal(probe.totalSamples, 10)
+    assert.equal(probe.fileSize, 80)
+    assert.equal(probe.format, 'cs16')
+    assert.equal(probe.numChannels, 2)
+    write(entries.map(({ name, hash }) => [name, hash]))
+    assert.equal(resolveRecording(file, { streamIndex: 1 }).collection.streamIndex, 1)
+    for (const streamIndex of [-1, 2, 0.5]) assert.throws(() => resolveRecording(file, { streamIndex }), /index/)
+  })
+})
+
+test('collection hashes, missing recordings, empty streams and invalid paths fail clearly', () => {
+  collectionFixture(({ file, entries, write }) => {
+    write([{ ...entries[0], hash: '0'.repeat(128) }])
+    assert.throws(() => resolveRecording(file), /hash mismatch/)
+    write([{ ...entries[0], name: '../escape' }])
+    assert.throws(() => resolveRecording(file), /name/)
+    write([{ ...entries[0], name: 'missing' }])
+    assert.throws(() => resolveRecording(file), /ENOENT/)
+    write([])
+    assert.throws(() => resolveRecording(file), /index/)
+  })
+})
+
+test('annotation edits update collection metadata hashes and preserve the other stream', () => {
+  collectionFixture(({ file, entries }) => {
+    const { saveAnnotationMetadata } = require('../src/main/annotation-metadata.ts')
+    const resolved = resolveRecording(file)
+    const info = { ...probeRecording(file), ...resolved, recordingId: 'test' }
+    saveAnnotationMetadata(info, { sampleStart: 0, sampleCount: 2, label: 'burst' }, 'rf')
+    const updated = resolveRecording(file)
+    assert.notEqual(updated.collection.streams[0].hash, entries[0].hash)
+    assert.equal(updated.collection.streams[1].hash, entries[1].hash)
+    assert.equal(JSON.parse(fs.readFileSync(updated.path)).annotations[0]['core:label'], 'burst')
+  })
+})
+
+test('SigMF sample offsets convert between local sample coordinates and absolute annotations', () => {
+  const info = { ...file(), totalSamples: 20, sigmfMetaJson: JSON.stringify({ global: { 'core:offset': 100 },
+    captures: [{ 'core:sample_start': 100, 'core:frequency': 1000 }],
+    annotations: [{ 'core:sample_start': 102, 'core:sample_count': 3, 'core:label': 'offset' }] }) }
+  assert.equal(captureSegments(info)[0].start, 0)
+  assert.equal(readAnnotations(info)[0].sampleStart, 2)
+  assert.equal(annotationRecords({ sampleStart: 2, sampleCount: 3 }, info)[0]['core:sample_start'], 102)
+})
+
+test('GPU tile cache obeys byte budget, replaces textures, and evicts least recently used entries', () => {
+  const { TileCache } = require('../src/renderer/webgl/TileCache.ts')
+  const deleted = [], cache = new TileCache({ deleteTexture: texture => deleted.push(texture) }, 100)
+  cache.put('a', 'A', 1, 40); cache.put('b', 'B', 1, 40)
+  cache.get('a'); cache.put('c', 'C', 1, 40)
+  assert.equal(cache.has('b'), false); assert.deepEqual(deleted, ['B'])
+  cache.put('a', 'A2', 1, 50)
+  assert.equal(cache.byteSize(), 90); assert.ok(deleted.includes('A'))
+  assert.throws(() => cache.put('oversized', 'huge', 1, 101), /budget/)
+  assert.ok(deleted.includes('huge'))
+  cache.clear(); assert.equal(cache.byteSize(), 0); assert.equal(cache.size(), 0)
+})
+
+test('tile scheduler deduplicates active work and replaces obsolete queued viewports', async () => {
+  const { TileScheduler } = require('../src/renderer/webgl/TileScheduler.ts')
+  const loaded = [], jobs = new Map(), complete = new Set()
+  const scheduler = new TileScheduler(key => complete.has(key), task => {
+    loaded.push(task.key); const job = deferred(); jobs.set(task.key, job)
+    return job.promise.then(() => complete.add(task.key))
+  }, () => {}, 2)
+  scheduler.update(['a', 'b', 'old'].map(key => ({ key })))
+  scheduler.update(['a', 'b', 'new'].map(key => ({ key })))
+  assert.deepEqual(loaded, ['a', 'b'])
+  jobs.get('a').resolve(); await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(loaded, ['a', 'b', 'new'])
+  scheduler.dispose(); jobs.get('b').resolve(); jobs.get('new').resolve()
+  await new Promise(resolve => setImmediate(resolve))
+})
+
+test('linear-time spectral median matches sorting for odd, even, repeated and adversarial inputs', () => {
+  const { spectralNoiseDb } = require('../src/shared/spectral-power.ts')
+  for (const n of [1, 2, 3, 32, 511, 8192]) for (const kind of ['random', 'constant', 'sorted', 'reverse']) {
+    const data = Float32Array.from({ length: n }, (_, i) => kind === 'constant' ? 3 : kind === 'sorted' ? i : kind === 'reverse' ? -i : Math.sin(i * 1933.7))
+    const original = data.slice(), sorted = data.slice().sort()
+    const median = (sorted[Math.floor((n - 1) / 2)] + sorted[Math.floor(n / 2)]) / 2
+    assert.equal(spectralNoiseDb(data), median)
+    assert.deepEqual(data, original)
+  }
+})
+
+test('annotation import parses metadata a constant number of times', () => {
+  const info = { ...file(), sigmfMetaJson: JSON.stringify({ global: { 'core:offset': 100 }, captures: [],
+    annotations: Array.from({ length: 2000 }, (_, i) => ({ 'core:sample_start': 100+i, 'core:sample_count': 1 })) }) }
+  const parse = JSON.parse; let calls = 0
+  JSON.parse = (...args) => { ++calls; return parse(...args) }
+  try { assert.equal(readAnnotations(info).length, 2000); assert.ok(calls <= 2) }
+  finally { JSON.parse = parse }
 })

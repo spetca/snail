@@ -13,13 +13,18 @@ export function parseMetadata(json: string): SigMFDocument {
   return meta
 }
 
+function sampleOrigin(info: FileInfo): number {
+  return info.sigmfMetaJson ? (parseMetadata(info.sigmfMetaJson).global?.['core:offset'] ?? 0) : 0
+}
+
 export function captureSegments(info: FileInfo): CaptureSegment[] {
   let meta: SigMFDocument | null = null
   try { meta = info.sigmfMetaJson ? parseMetadata(info.sigmfMetaJson) : null }
   catch { return [{ start: 0, end: info.totalSamples, frequency: info.centerFrequency ?? 0 }] }
+  const origin = meta?.global?.['core:offset'] ?? 0
   const captures = (meta?.captures ?? []) as SigMFDocument[]
   const points = captures.map(capture => ({
-    start: capture['core:sample_start'] ?? 0,
+    start: (capture['core:sample_start'] ?? 0) - origin,
     // Capture properties do not carry forward from an earlier capture.
     frequency: Number.isFinite(capture['core:frequency']) ? capture['core:frequency'] : 0
   })).filter(capture => Number.isSafeInteger(capture.start) && capture.start >= 0 && capture.start < info.totalSamples)
@@ -35,8 +40,8 @@ export function centerFrequencyAt(info: FileInfo | null, sample: number): number
   return captureSegments(info).find(capture => sample >= capture.start && sample < capture.end)?.frequency ?? 0
 }
 
-export function annotationFromRecord(record: SigMFDocument, info: FileInfo, captures = captureSegments(info)): SigMFAnnotation {
-  const sampleStart = record['core:sample_start'] ?? 0
+export function annotationFromRecord(record: SigMFDocument, info: FileInfo, captures = captureSegments(info), origin = sampleOrigin(info)): SigMFAnnotation {
+  const sampleStart = (record['core:sample_start'] ?? 0) - origin
   const captureEnd = captures.find(capture => sampleStart >= capture.start && sampleStart < capture.end)?.end ?? info.totalSamples
   return {
     sampleStart,
@@ -49,7 +54,9 @@ export function annotationFromRecord(record: SigMFDocument, info: FileInfo, capt
 export function readAnnotations(info: FileInfo): SigMFAnnotation[] {
   if (!info.sigmfMetaJson) return []
   const captures = captureSegments(info)
-  return (parseMetadata(info.sigmfMetaJson).annotations ?? []).map((record: SigMFDocument) => annotationFromRecord(record, info, captures))
+  const meta = parseMetadata(info.sigmfMetaJson)
+  const origin = meta.global?.['core:offset'] ?? 0
+  return (meta.annotations ?? []).map((record: SigMFDocument) => annotationFromRecord(record, info, captures, origin))
 }
 
 export function splitAnnotation(annotation: SigMFAnnotation, info: FileInfo, captures = captureSegments(info)) {
@@ -83,8 +90,9 @@ export function annotationRecords(annotation: SigMFAnnotation, info: FileInfo): 
   if ((low == null) !== (high == null) || (low != null && (!Number.isFinite(low) || !Number.isFinite(high) || low >= high! || low < -info.sampleRate / 2 || high! > info.sampleRate / 2))) {
     throw new Error('Select valid frequency bounds inside the recording bandwidth')
   }
+  const origin = sampleOrigin(info)
   return splitAnnotation(annotation, info).map(segment => ({
-    'core:sample_start': segment.sampleStart,
+    'core:sample_start': segment.sampleStart + origin,
     'core:sample_count': segment.sampleCount,
     ...(low == null ? {} : {
       'core:freq_lower_edge': low + segment.centerFrequency,

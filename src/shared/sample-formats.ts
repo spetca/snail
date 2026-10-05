@@ -20,7 +20,13 @@ export interface SigMFAnnotation {
   comment?: string
 }
 
+export interface OpenOptions { viewStart?: number; viewLength?: number; channel?: number; streamIndex?: number }
+
 export interface FileInfo {
+  numChannels?: number
+  channel?: number
+  dataPath?: string
+  collection?: { path: string; streamIndex: number; streams: { name: string; hash: string }[] }
   /** Unique to this open operation, including reopens of the same path. */
   recordingId: string
   path: string
@@ -35,6 +41,7 @@ export interface FileInfo {
 }
 
 export interface ProbeResult {
+  numChannels?: number
   totalSamples: number
   sampleRate: number
   format: SampleFormat

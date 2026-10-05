@@ -1,3 +1,4 @@
+import type { OpenOptions } from '../shared/sample-formats'
 import type { DatasetRequest, DatasetJob } from '../shared/dataset'
 import type { DetectionState, StartDetectionRequest, ReviewProposalRequest, ReviewProposalResult } from '../shared/detection'
 import type { AnnotationFrequencyMode } from '../shared/sigmf'
@@ -15,8 +16,9 @@ export interface SnailAPI {
   resetDetection: (recordingId: string, expectedRevision: number) => Promise<DetectionState>
   reviewProposal: (request: ReviewProposalRequest) => Promise<ReviewProposalResult>
   probeFile: (path: string) => Promise<ProbeResult>
-  openFile: (path: string, format?: SampleFormat, opts?: { viewStart?: number; viewLength?: number }) => Promise<FileInfo>
+  openFile: (path: string, format?: SampleFormat, opts?: OpenOptions) => Promise<FileInfo>
   getSamples: (start: number, length: number, stride: number | undefined, recordingId: string) => Promise<Float32Array>
+  readFFTTile: (req: FFTTileRequest) => Promise<Float32Array>
   computeFFTTile: (req: FFTTileRequest) => Promise<Float32Array>
   exportSigMF: (config: ExportConfig) => Promise<{ success: boolean; error?: string }>
   correlate: (req: CorrelateRequest) => Promise<Float32Array>
@@ -53,6 +55,7 @@ const api: SnailAPI = {
   probeFile: (path) => ipcRenderer.invoke(IPC.PROBE_FILE, path),
   openFile: (path, format, opts) => ipcRenderer.invoke(IPC.OPEN_FILE, path, format, opts),
   getSamples: (start, length, stride, recordingId) => ipcRenderer.invoke(IPC.GET_SAMPLES, start, length, stride, recordingId),
+  readFFTTile: req => ipcRenderer.invoke(IPC.READ_FFT_TILE, req),
   computeFFTTile: (req) => ipcRenderer.invoke(IPC.COMPUTE_FFT_TILE, req),
   exportSigMF: (config) => ipcRenderer.invoke(IPC.EXPORT_SIGMF, config),
   correlate: (req) => ipcRenderer.invoke(IPC.CORRELATE, req),

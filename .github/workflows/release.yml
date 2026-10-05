@@ -38,7 +38,7 @@ jobs:
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfftw3-dev nlohmann-json3-dev cmake pkg-config
+          sudo apt-get install -y libfftw3-dev nlohmann-json3-dev cmake pkg-config xvfb
           # liquid-dsp from source
           git clone https://github.com/jgaeddert/liquid-dsp.git /tmp/liquid-dsp
           cd /tmp/liquid-dsp
@@ -51,16 +51,19 @@ jobs:
 
       # ── Build ──
 
-      - name: Install Node dependencies
-        run: npm ci
+      - name: Install and build from source
+        run: ./install.sh
 
-      - name: Build native addon (for Electron)
+      - name: Regression tests
         run: |
-          ELECTRON_VER=$(node -e "console.log(require('./node_modules/electron/package.json').version)")
-          npx cmake-js compile -d src/native --runtime electron --runtime-version $ELECTRON_VER
+          npm test
+          npm run test:native
 
-      - name: Build Electron app
-        run: npm run build
+      - name: GPU correctness and fallback (software driver)
+        if: matrix.platform == 'linux'
+        run: xvfb-run -a npm run test:gpu
+        env:
+          SNAIL_GPU_SOFTWARE: '1'
 
       # ── Package & publish ──
 

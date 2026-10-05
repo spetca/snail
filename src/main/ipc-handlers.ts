@@ -1,3 +1,5 @@
+import { resolveRecording, probeRecording } from './sigmf-files'
+import type { OpenOptions } from '../shared/sample-formats'
 import { DatasetExporter } from './dataset/exporter'
 import type { DatasetRequest } from '../shared/dataset'
 import { EventProjects } from './detection/event-projects'
@@ -11,7 +13,6 @@ import * as path from 'path'
 import { spawn } from 'child_process'
 import { IPC } from '../shared/ipc-channels'
 import type { SampleFormat, SigMFAnnotation, FFTTileRequest, ExportConfig, CorrelateRequest, ClassificationResult, PulseFindRequest } from '../shared/sample-formats'
-import { FORMAT_EXTENSIONS, SAMPLE_BYTE_SIZES } from '../shared/sample-formats'
 
 // Native addon will be loaded when built
 let native: any = null
@@ -59,12 +60,12 @@ export function registerIpcHandlers(onRecordingOpened: () => void = () => {}): v
   const events = new EventProjects(path.join(app.getPath('userData'), 'event-projects'), recordingSession,
     (start, fftSize, stride, end) => {
       const addon = loadNative()
-      if (!addon) throw new Error('Native addon not loaded')
+      if (!addon) throw new Error('Native DSP addon is unavailable. For a source checkout, run ./install.sh (or npm run setup), then restart Snail. See docs/development.md.')
       return addon.computeFFTTile(start, fftSize, stride, end)
     })
   const datasets = new DatasetExporter(recordingSession, (start, count) => {
     const addon = loadNative()
-    if (!addon) throw new Error('Native addon not loaded')
+    if (!addon) throw new Error('Native DSP addon is unavailable. For a source checkout, run ./install.sh (or npm run setup), then restart Snail. See docs/development.md.')
     return addon.getSamples(start, count, 1)
   })
   ipcMain.handle(IPC.DATASET_STATE, (_event, id: string) => datasets.state(id))
@@ -93,7 +94,7 @@ export function registerIpcHandlers(onRecordingOpened: () => void = () => {}): v
           extensions: [
             'cf32', 'fc32', 'cfile', 'raw', 'iq',
             'cf64', 'cs32', 'cs16', 'sc16', 'cs8', 'sc8', 'cu8',
-            'sigmf-data', 'sigmf-meta',
+            'sigmf-data', 'sigmf-meta', 'sigmf-collection',
             'rf32', 'rf64', 'rs16', 'rs8', 'ru8'
           ]
         },
@@ -120,42 +121,26 @@ export function registerIpcHandlers(onRecordingOpened: () => void = () => {}): v
   ipcMain.handle(IPC.PROBE_FILE, async (_event, filePath: string) => {
     if (typeof filePath !== 'string' || !filePath) throw new Error('Invalid file path')
 
-    const stat = fs.statSync(filePath)
-    const ext = path.extname(filePath).toLowerCase()
-    const format: SampleFormat = (FORMAT_EXTENSIONS[ext] ?? 'cf32') as SampleFormat
-    const sampleBytes = SAMPLE_BYTE_SIZES[format]
-    const totalSamples = Math.floor(stat.size / sampleBytes)
-
-    let sampleRate = 1000000
-    let centerFrequency: number | undefined
-
-    // For SigMF files, parse meta to get sample rate and center frequency
-    const metaPath = filePath.replace(/\.sigmf-data$/, '.sigmf-meta')
-    if ((filePath.endsWith('.sigmf-data') || filePath.endsWith('.sigmf-meta')) && fs.existsSync(metaPath)) {
-      try {
-        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
-        if (meta?.global?.['core:sample_rate']) sampleRate = meta.global['core:sample_rate']
-        if (meta?.captures?.[0]?.['core:frequency']) centerFrequency = meta.captures[0]['core:frequency']
-      } catch { /* use defaults */ }
-    }
-
-    return { totalSamples, sampleRate, format, fileSize: stat.size, centerFrequency }
+    return probeRecording(filePath)
   })
 
-  ipcMain.handle(IPC.OPEN_FILE, async (_event, filePath: string, format?: SampleFormat, opts?: { viewStart?: number; viewLength?: number }) => {
+  ipcMain.handle(IPC.OPEN_FILE, async (_event, filePath: string, format?: SampleFormat, opts?: OpenOptions) => {
     const addon = loadNative()
     if (!addon) {
-      throw new Error('Native addon not loaded')
+      throw new Error('Native DSP addon is unavailable. For a source checkout, run ./install.sh (or npm run setup), then restart Snail. See docs/development.md.')
     }
     if (typeof filePath !== 'string' || !filePath) {
       throw new Error('Invalid file path: ' + typeof filePath)
     }
+    const resolved = resolveRecording(filePath, opts)
+    filePath = resolved.path
     // Read sidecar errors before publishing a different native source/session.
     const metaPath = metadataPaths(filePath).meta
     const sidecar = fs.existsSync(metaPath) ? fs.readFileSync(metaPath, 'utf8') : undefined
     const info = recordingSession.open(() => ({
       ...addon.openFile(String(filePath), String(format || ''), opts ?? {}),
-      ...(sidecar ? { sigmfMetaJson: sidecar } : {})
+      ...(sidecar ? { sigmfMetaJson: sidecar } : {}),
+      ...(resolved.collection ? { collection: resolved.collection } : {})
     }))
     onRecordingOpened()
     return info
@@ -163,43 +148,49 @@ export function registerIpcHandlers(onRecordingOpened: () => void = () => {}): v
 
   ipcMain.handle(IPC.GET_SAMPLES, async (_event, start: number, length: number, stride: number = 1, recordingId: string) => {
     const addon = loadNative()
-    if (!addon) throw new Error('Native addon not loaded')
-    return recordingSession.run(recordingId, () => addon.getSamples(start, length, stride || 1))
+    if (!addon) throw new Error('Native DSP addon is unavailable. For a source checkout, run ./install.sh (or npm run setup), then restart Snail. See docs/development.md.')
+    return recordingSession.run(recordingId, () => addon.getSamplesAsync(start, length, stride || 1))
+  })
+
+  ipcMain.handle(IPC.READ_FFT_TILE, async (_event, req: FFTTileRequest) => {
+    const addon = loadNative()
+    if (!addon) throw new Error('Native DSP addon is unavailable. Run ./install.sh and restart Snail.')
+    return recordingSession.run(req.recordingId, () => addon.readFFTTile(req.startSample, req.fftSize, req.stride))
   })
 
   ipcMain.handle(IPC.COMPUTE_FFT_TILE, async (_event, req: FFTTileRequest) => {
     const addon = loadNative()
-    if (!addon) throw new Error('Native addon not loaded')
+    if (!addon) throw new Error('Native DSP addon is unavailable. For a source checkout, run ./install.sh (or npm run setup), then restart Snail. See docs/development.md.')
     return recordingSession.run(req.recordingId, () => addon.computeFFTTile(req.startSample, req.fftSize, req.stride))
   })
 
   ipcMain.handle(IPC.EXPORT_SIGMF, async (_event, config: ExportConfig) => {
     const addon = loadNative()
-    if (!addon) throw new Error('Native addon not loaded')
+    if (!addon) throw new Error('Native DSP addon is unavailable. For a source checkout, run ./install.sh (or npm run setup), then restart Snail. See docs/development.md.')
     return recordingSession.run(config.recordingId, () => addon.exportSigMF(config))
   })
 
   ipcMain.handle(IPC.READ_FILE_SAMPLES, async (_event, path: string, format: string, start: number, length: number) => {
     const addon = loadNative()
-    if (!addon) throw new Error('Native addon not loaded')
+    if (!addon) throw new Error('Native DSP addon is unavailable. For a source checkout, run ./install.sh (or npm run setup), then restart Snail. See docs/development.md.')
     return addon.readFileSamples(path, format, start, length)
   })
 
   ipcMain.handle(IPC.CORRELATE, async (_event, req: CorrelateRequest) => {
     const addon = loadNative()
-    if (!addon) throw new Error('Native addon not loaded')
+    if (!addon) throw new Error('Native DSP addon is unavailable. For a source checkout, run ./install.sh (or npm run setup), then restart Snail. See docs/development.md.')
     return recordingSession.run(req.recordingId, () => addon.correlate(req))
   })
 
   ipcMain.handle(IPC.COMPUTE_FFT, async (_event, req: any) => {
     const addon = loadNative()
-    if (!addon) throw new Error('Native addon not loaded')
+    if (!addon) throw new Error('Native DSP addon is unavailable. For a source checkout, run ./install.sh (or npm run setup), then restart Snail. See docs/development.md.')
     return recordingSession.run(req.recordingId, () => addon.computeFFT(req))
   })
 
   ipcMain.handle(IPC.EXTRACT_FEATURES, async (_event, req: { recordingId: string; startSample: number; sampleCount: number; frameSize?: number }) => {
     const addon = loadNative()
-    if (!addon) throw new Error('Native addon not loaded')
+    if (!addon) throw new Error('Native DSP addon is unavailable. For a source checkout, run ./install.sh (or npm run setup), then restart Snail. See docs/development.md.')
     return recordingSession.run(req.recordingId, () => addon.extractFeatures(req))
   })
 
@@ -339,19 +330,19 @@ export function registerIpcHandlers(onRecordingOpened: () => void = () => {}): v
 
   ipcMain.handle(IPC.LOAD_CLASSIFIER, async (_event, modelPath: string) => {
     const addon = loadNative()
-    if (!addon) throw new Error('Native addon not loaded')
+    if (!addon) throw new Error('Native DSP addon is unavailable. For a source checkout, run ./install.sh (or npm run setup), then restart Snail. See docs/development.md.')
     return addon.loadClassifier(modelPath)
   })
 
   ipcMain.handle(IPC.CLASSIFY_REGION, async (_event, req: { recordingId: string; startSample: number; sampleCount: number; frameSize?: number }): Promise<ClassificationResult[]> => {
     const addon = loadNative()
-    if (!addon) throw new Error('Native addon not loaded')
+    if (!addon) throw new Error('Native DSP addon is unavailable. For a source checkout, run ./install.sh (or npm run setup), then restart Snail. See docs/development.md.')
     return recordingSession.run(req.recordingId, () => addon.classifyRegion(req))
   })
 
   ipcMain.handle(IPC.FIND_PULSES, async (_event, req: PulseFindRequest) => {
     const addon = loadNative()
-    if (!addon) throw new Error('Native addon not loaded')
+    if (!addon) throw new Error('Native DSP addon is unavailable. For a source checkout, run ./install.sh (or npm run setup), then restart Snail. See docs/development.md.')
     return recordingSession.run(req.recordingId, () => addon.findPulses(req))
   })
 

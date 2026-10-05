@@ -149,3 +149,79 @@ test('invalid model dimensions fail without crashing or leaving a loaded classif
     assert.throws(() => native.classifyRegion({ startSample: 0, sampleCount: 512 }), /No classifier/)
   }
 })
+
+function sigmfFixture(name, datatype, channels, bytes, extra = {}) {
+  const file = path.join(dir, name + '.sigmf-meta')
+  fs.writeFileSync(file.replace('.sigmf-meta', '.sigmf-data'), bytes)
+  fs.writeFileSync(file, JSON.stringify({ global: { 'core:datatype': datatype, 'core:num_channels': channels,
+    'core:version': '1.2.6', 'core:sample_rate': 8000, ...extra }, captures: [], annotations: [] }))
+  return file
+}
+
+test('SigMF interleaved complex channels preserve frame counts, views, detection decimation and export', () => {
+  const values = [1, -1, 101, -101, 2, -2, 102, -102, 3, -3, 103, -103, 4, -4, 104, -104]
+  const file = sigmfFixture('multi', 'cf32_le', 2, Buffer.from(new Float32Array(values).buffer))
+  const info = native.openFile(file, '', { channel: 1 })
+  assert.equal(info.totalSamples, 4)
+  assert.equal(info.numChannels, 2)
+  assert.equal(info.channel, 1)
+  assert.deepEqual(Array.from(native.getSamples(0, 4)), [101, -101, 102, -102, 103, -103, 104, -104])
+  assert.deepEqual(Array.from(native.getSamples(0, 2, 2)), [102, -102, 104, -104])
+  const outputPath = path.join(dir, 'selected-channel')
+  assert.equal(native.exportSigMF({ outputPath, startSample: 1, endSample: 3, sampleRate: 8000, applyBandpass: false }).success, true)
+  native.openFile(outputPath + '.sigmf-meta')
+  assert.deepEqual(Array.from(native.getSamples(0, 2)), [102, -102, 103, -103])
+  assert.equal(native.openFile(file, '', { channel: 0, viewStart: 1, viewLength: 2 }).totalSamples, 2)
+  assert.deepEqual(Array.from(native.getSamples(0, 2)), [2, -2, 3, -3])
+  for (const channel of [-1, 2, 0.5, NaN]) assert.throws(() => native.openFile(file, '', { channel }), /channel/i)
+  assert.deepEqual(Array.from(native.getSamples(0, 2)), [2, -2, 3, -3])
+})
+
+test('SigMF real and complex big-endian channels decode independently', () => {
+  const real = Buffer.alloc(12)
+  ;[32767, -32768, 16384, -16384, 8192, -8192].forEach((x, i) => real.writeInt16BE(x, i * 2))
+  native.openFile(sigmfFixture('real-be', 'ri16_be', 2, real), '', { channel: 1 })
+  assert.deepEqual(Array.from(native.getSamples(0, 3)), [-1, 0, -0.5, 0, -0.25, 0])
+  const complex = Buffer.alloc(32)
+  ;[1.5, -2.5, 3.5, -4.5].forEach((x, i) => complex.writeDoubleBE(x, i * 8))
+  native.openFile(sigmfFixture('complex-be', 'cf64_be', 2, complex), '', { channel: 1 })
+  assert.deepEqual(Array.from(native.getSamples(0, 1)), [3.5, -4.5])
+})
+
+test('SigMF rejects malformed layout and datatypes instead of silently misreading IQ', () => {
+  for (const channels of [0, -1, 1.5, '2']) {
+    assert.throws(() => native.openFile(sigmfFixture('bad-channels', 'cf32_le', channels, Buffer.alloc(16))), /num_channels/)
+  }
+  assert.throws(() => native.openFile(sigmfFixture('truncated', 'cf32_le', 2, Buffer.alloc(24))), /incomplete sample frame/)
+  assert.throws(() => native.openFile(sigmfFixture('unsupported', 'bogus', 1, Buffer.alloc(16))), /Unsupported SigMF datatype/)
+  const broken = path.join(dir, 'broken.sigmf-meta')
+  fs.writeFileSync(broken, '{broken')
+  assert.throws(() => native.openFile(broken))
+})
+
+test('SigMF core:dataset resolves relative to metadata', () => {
+  const file = sigmfFixture('named', 'cf32_le', 1, Buffer.alloc(16), { 'core:dataset': 'payload.bin' })
+  fs.renameSync(file.replace('.sigmf-meta', '.sigmf-data'), path.join(dir, 'payload.bin'))
+  assert.equal(native.openFile(file).totalSamples, 2)
+  assert.equal(native.openFile(file).dataPath, path.join(dir, 'payload.bin'))
+})
+
+test('asynchronous trace reads retain their source, preserve peak decimation, and validate allocations', async () => {
+  native.openFile(aPath)
+  const expected = native.getSamples(0, 512, 1024)
+  const pending = native.getSamplesAsync(0, 512, 1024)
+  native.openFile(bPath)
+  assert.deepEqual(await pending, expected)
+  assert.throws(() => native.getSamplesAsync(0, 1 << 30, 1), /Invalid sample read/)
+  assert.throws(() => native.getSamplesAsync(-1, 10, 1), /Invalid sample read/)
+})
+
+test('GPU tile reads preserve channels, window overlap and EOF zero padding', async () => {
+  const input = new Float32Array([1,0,11,0, 2,0,12,0, 3,0,13,0, 4,0,14,0, 5,0,15,0])
+  const file = sigmfFixture('gpu-windows', 'cf32_le', 2, Buffer.from(input.buffer))
+  native.openFile(file, '', { channel: 1 })
+  const pending = native.readFFTTile(0, 4, 2)
+  native.openFile(bPath)
+  assert.deepEqual(Array.from(await pending), [11,0,12,0,13,0,14,0, 13,0,14,0,15,0,0,0, 15,0,0,0,0,0,0,0])
+  assert.throws(() => native.readFFTTile(0, 32768, 1), /Invalid sample read/)
+})

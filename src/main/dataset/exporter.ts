@@ -46,8 +46,8 @@ export class DatasetExporter {
       }
       if (mode === 'channelized') channelRecipe(event.freqLowerEdge, event.freqUpperEdge, info.sampleRate, event.sampleStart)
     }
-    const sourcePath = fs.realpathSync(metadataPaths(info.path).data)
-    if (sourcePath !== snapshot.source.path || info.sampleRate !== snapshot.source.sampleRate || info.totalSamples !== snapshot.source.totalSamples || info.format !== snapshot.source.format) {
+    const sourcePath = fs.realpathSync(info.dataPath ?? metadataPaths(info.path).data)
+    if (sourcePath !== snapshot.source.path || info.sampleRate !== snapshot.source.sampleRate || info.totalSamples !== snapshot.source.totalSamples || info.format !== snapshot.source.format || (info.channel ?? 0) !== (snapshot.source.channel ?? 0)) {
       throw new Error('Review project does not match the open recording')
     }
     this.checkSource(snapshot)

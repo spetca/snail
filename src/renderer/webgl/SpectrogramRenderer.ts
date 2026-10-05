@@ -1,284 +1,177 @@
+import { fftTile } from '../dsp/fft-tiles'
 import { TileCache } from './TileCache'
 import { generateColorMap } from './ColorMap'
+import { GpuFFT, makeProgram } from './GpuFFT'
+import type { FFTTileRequest } from '../../shared/sample-formats'
 
 export const TILE_LINES = 256
-
-const vertShaderSrc = `
-attribute vec2 a_position;
-attribute vec2 a_texCoord;
-varying vec2 v_texCoord;
+const vertex = `#version 300 es
+uniform vec2 u_bounds;
+out vec2 v_uv;
 void main() {
-  gl_Position = vec4(a_position, 0.0, 1.0);
-  v_texCoord = a_texCoord;
-}
-`
-
-// The tile texture is laid out as:
-//   width  = fftSize (frequency bins)
-//   height = numLines (time steps)
-// On screen we want:
-//   X axis = time  -> sample from texture Y
-//   Y axis = freq  -> sample from texture X
-// So we swap: texCoord.x is screen-X (time) -> texture row (Y)
-//             texCoord.y is screen-Y (freq) -> texture col (X)
-const fragShaderSrc = `
+  vec2 p = vec2(gl_VertexID & 1, gl_VertexID >> 1);
+  gl_Position = vec4(mix(u_bounds.x, u_bounds.y, p.x), p.y * 2.0 - 1.0, 0.0, 1.0);
+  v_uv = vec2(p.x, 1.0 - p.y);
+}`
+const fragment = `#version 300 es
 precision highp float;
-varying vec2 v_texCoord;
+in vec2 v_uv;
 uniform sampler2D u_tile;
 uniform sampler2D u_colormap;
-uniform float u_powerMin;
-uniform float u_powerMax;
-uniform float u_yZoom;
-uniform float u_yOffset;
+uniform vec2 u_power;
+uniform vec2 u_y;
+out vec4 color;
 void main() {
-  // v_texCoord.y is screen freq (0=top, 1=bottom)
-  // Apply Y zoom and scroll: map visible sub-range to full texture
-  float freqNorm = u_yOffset + v_texCoord.y / u_yZoom;
-
-  // Discard pixels outside the valid frequency range
-  if (freqNorm < 0.0 || freqNorm > 1.0) {
-    gl_FragColor = vec4(0.02, 0.035, 0.06, 1.0);
-    return;
-  }
-
-  vec2 tileUV = vec2(1.0 - freqNorm, v_texCoord.x);
-  float power = texture2D(u_tile, tileUV).r;
-  float normalized = (power - u_powerMin) / (u_powerMax - u_powerMin);
-  normalized = clamp(normalized, 0.0, 1.0);
-  vec4 color = texture2D(u_colormap, vec2(normalized, 0.5));
-  gl_FragColor = color;
-}
-`
-
+  float frequency = u_y.y + v_uv.y / u_y.x;
+  if (frequency < 0.0 || frequency > 1.0) { color = vec4(0.02, 0.035, 0.06, 1.0); return; }
+  float power = texture(u_tile, vec2(1.0 - frequency, v_uv.x)).r;
+  float normalized = clamp((power - u_power.x) / max(0.001, u_power.y - u_power.x), 0.0, 1.0);
+  color = texture(u_colormap, vec2(normalized, 0.5));
+}`
 export interface RenderParams {
-  scrollOffset: number
-  fftSize: number
-  stride: number
-  powerMin: number
-  powerMax: number
-  totalSamples: number
-  yZoomLevel?: number
-  yScrollOffset?: number
+  scrollOffset: number; fftSize: number; stride: number; powerMin: number; powerMax: number
+  totalSamples: number; yZoomLevel?: number; yScrollOffset?: number
 }
 
 export class SpectrogramRenderer {
   private gl: WebGL2RenderingContext
-  private program: WebGLProgram | null = null
+  private program: WebGLProgram
   private tileCache: TileCache
-  private colormapTexture: WebGLTexture | null = null
-  private posBuffer: WebGLBuffer | null = null
-  private texBuffer: WebGLBuffer | null = null
+  private colormap: WebGLTexture
+  private vao: WebGLVertexArrayObject
+  private gpu: GpuFFT | null = null
+  private backend = new Map<number, { cpuMs: number; gpu?: boolean }>()
   private width = 0
   private height = 0
-  private canFilterFloat = false
-
-  private aPos = -1
-  private aTex = -1
-  private uTile: WebGLUniformLocation | null = null
-  private uColormap: WebGLUniformLocation | null = null
-  private uPowerMin: WebGLUniformLocation | null = null
-  private uPowerMax: WebGLUniformLocation | null = null
-  private uYZoom: WebGLUniformLocation | null = null
-  private uYOffset: WebGLUniformLocation | null = null
+  private disposed = false
+  private maxTexture: number
+  private bounds: WebGLUniformLocation | null
+  private power: WebGLUniformLocation | null
+  private y: WebGLUniformLocation | null
 
   constructor(canvas: HTMLCanvasElement) {
     const gl = canvas.getContext('webgl2', { antialias: false, alpha: false })
     if (!gl) throw new Error('WebGL2 not supported')
     this.gl = gl
-    // R32F textures require this extension for LINEAR filtering; without it sampling returns 0
-    this.canFilterFloat = !!gl.getExtension('OES_texture_float_linear')
+    this.maxTexture = gl.getParameter(gl.MAX_TEXTURE_SIZE)
     this.tileCache = new TileCache(gl)
-    this.init()
+    this.program = makeProgram(gl, vertex, fragment)
+    this.vao = gl.createVertexArray()!
+    this.bounds = gl.getUniformLocation(this.program, 'u_bounds')
+    this.power = gl.getUniformLocation(this.program, 'u_power')
+    this.y = gl.getUniformLocation(this.program, 'u_y')
+    gl.useProgram(this.program)
+    gl.uniform1i(gl.getUniformLocation(this.program, 'u_tile'), 0)
+    gl.uniform1i(gl.getUniformLocation(this.program, 'u_colormap'), 1)
+    this.colormap = gl.createTexture()!
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.colormap)
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, 256, 1)
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 256, 1, gl.RGBA, gl.UNSIGNED_BYTE, generateColorMap('plasma-dark'))
+    this.filter()
+    gl.clearColor(0.02, 0.035, 0.06, 1)
+    // A small real numerical check catches broken/unsupported float render targets.
+    try { this.gpu = new GpuFFT(gl); this.gpu.verify() }
+    catch { this.gpu?.dispose(); this.gpu = null }
   }
 
-  private init(): void {
+  private filter(): void {
     const gl = this.gl
-
-    const vert = this.compileShader(gl.VERTEX_SHADER, vertShaderSrc)
-    const frag = this.compileShader(gl.FRAGMENT_SHADER, fragShaderSrc)
-
-    this.program = gl.createProgram()!
-    gl.attachShader(this.program, vert)
-    gl.attachShader(this.program, frag)
-    gl.linkProgram(this.program)
-
-    if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) {
-      const message = gl.getProgramInfoLog(this.program)
-      gl.deleteProgram(this.program)
-      this.program = null
-      throw new Error(`Shader link failed: ${message}`)
-    }
-
-    gl.deleteShader(vert)
-    gl.deleteShader(frag)
-    gl.useProgram(this.program)
-
-    this.aPos = gl.getAttribLocation(this.program, 'a_position')
-    this.aTex = gl.getAttribLocation(this.program, 'a_texCoord')
-    this.uTile = gl.getUniformLocation(this.program, 'u_tile')
-    this.uColormap = gl.getUniformLocation(this.program, 'u_colormap')
-    this.uPowerMin = gl.getUniformLocation(this.program, 'u_powerMin')
-    this.uPowerMax = gl.getUniformLocation(this.program, 'u_powerMax')
-    this.uYZoom = gl.getUniformLocation(this.program, 'u_yZoom')
-    this.uYOffset = gl.getUniformLocation(this.program, 'u_yOffset')
-
-    this.posBuffer = gl.createBuffer()!
-    this.texBuffer = gl.createBuffer()!
-
-    this.colormapTexture = gl.createTexture()!
-    gl.activeTexture(gl.TEXTURE1)
-    gl.bindTexture(gl.TEXTURE_2D, this.colormapTexture)
-    const cmData = generateColorMap('plasma-dark')
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, cmData)
+    // Half-float filtering is core WebGL2; R32F linear filtering is not.
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-
-    gl.clearColor(0.02, 0.035, 0.06, 1.0)
   }
+  resize(width: number, height: number): void { this.width = width; this.height = height }
+  hasTile(key: string): boolean { return this.tileCache.has(key) }
 
-  private compileShader(type: number, source: string): WebGLShader {
-    const gl = this.gl
-    const shader = gl.createShader(type)!
-    gl.shaderSource(shader, source)
-    gl.compileShader(shader)
-    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-      const message = gl.getShaderInfoLog(shader)
-      gl.deleteShader(shader)
-      throw new Error(`Shader compile failed: ${message}`)
+  /** The first tile establishes CPU cost; one following tile measures the complete GPU path including IPC. */
+  async loadTile(key: string, req: FFTTileRequest): Promise<void> {
+    const baseline = this.backend.get(req.fftSize)
+    if (this.gpu?.supports(req.fftSize) && baseline && baseline.gpu !== false && window.snailAPI.readFFTTile) {
+      const gpu = this.gpu
+      const started = performance.now()
+      let texture: WebGLTexture | null = null
+      try {
+        const samples = await window.snailAPI.readFFTTile(req)
+        if (this.disposed) return
+        texture = gpu.compute(samples, req.fftSize)
+        const rows = samples.length / (req.fftSize * 2)
+        // Timing is needed only once per FFT size/context. Normal rendering never reads back or waits.
+        if (baseline.gpu === undefined) {
+          baseline.gpu = true
+          await gpu.finished()
+          baseline.gpu = performance.now() - started < Math.max(2, baseline.cpuMs * 1.1)
+        }
+        if (this.disposed) { this.gl.deleteTexture(texture); return }
+        this.gl.activeTexture(this.gl.TEXTURE0); this.gl.bindTexture(this.gl.TEXTURE_2D, texture); this.filter()
+        this.tileCache.put(key, texture, rows, req.fftSize * rows * 2)
+        return
+      } catch {
+        if (texture) this.gl.deleteTexture(texture)
+        baseline.gpu = false
+        if (this.disposed || this.gl.isContextLost()) return
+      }
     }
-    return shader
-  }
-
-  resize(width: number, height: number): void {
-    this.width = width
-    this.height = height
-    this.gl.viewport(0, 0, width, height)
-  }
-
-  hasTile(key: string): boolean {
-    return this.tileCache.has(key)
+    const started = performance.now()
+    const data = await fftTile(req)
+    if (this.disposed) return
+    this.uploadTile(key, data, req.fftSize)
+    if (!baseline) this.backend.set(req.fftSize, { cpuMs: performance.now() - started })
   }
 
   uploadTile(key: string, data: Float32Array, fftSize: number): void {
-    const gl = this.gl
-    // Ensure we have a real Float32Array (IPC may deliver a different typed array)
-    const floatData = data instanceof Float32Array ? data : new Float32Array(data)
-    const numRows = Math.floor(floatData.length / fftSize)
-    if (numRows < 1) return
-
+    const gl = this.gl, rows = Math.floor(data.length / fftSize)
+    if (this.disposed || rows < 1) return
+    const bins = Math.min(fftSize, this.maxTexture)
+    let display = data
+    if (bins !== fftSize) {
+      // Fit GPUs with smaller texture limits while preserving narrow peaks in the display.
+      display = new Float32Array(rows * bins)
+      const group = fftSize / bins
+      for (let row = 0; row < rows; ++row) for (let bin = 0; bin < bins; ++bin) {
+        let peak = -Infinity
+        for (let k = 0; k < group; ++k) peak = Math.max(peak, data[row * fftSize + bin * group + k])
+        display[row * bins + bin] = peak
+      }
+    }
     const texture = gl.createTexture()!
-    gl.activeTexture(gl.TEXTURE0)
-    gl.bindTexture(gl.TEXTURE_2D, texture)
-
-    // Texture layout: width=fftSize (freq bins), height=numRows (time lines)
-    gl.texImage2D(
-      gl.TEXTURE_2D, 0, gl.R32F,
-      fftSize, numRows, 0,
-      gl.RED, gl.FLOAT, floatData
-    )
-    // R32F textures need OES_texture_float_linear for LINEAR; fall back to NEAREST
-    const filter = this.canFilterFloat ? gl.LINEAR : gl.NEAREST
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-
-    this.tileCache.put(key, texture, numRows)
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texture)
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.R16F, bins, rows)
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, bins, rows, gl.RED, gl.FLOAT, display)
+    this.filter()
+    if (gl.getError() !== gl.NO_ERROR) { gl.deleteTexture(texture); throw new Error('Cannot upload spectrogram texture') }
+    this.tileCache.put(key, texture, rows, bins * rows * 2)
   }
 
   render(params: RenderParams): void {
     const gl = this.gl
-    if (!this.program) return
-
-    gl.clear(gl.COLOR_BUFFER_BIT)
-    gl.useProgram(this.program)
-
-    gl.uniform1f(this.uPowerMin, params.powerMin)
-    gl.uniform1f(this.uPowerMax, params.powerMax)
-
-    // Y-axis zoom: yScrollOffset is in normalized [0,1) range
-    const yZoom = params.yZoomLevel ?? 1
-    const yOffset = params.yScrollOffset ?? 0
-    gl.uniform1f(this.uYZoom, yZoom)
-    gl.uniform1f(this.uYOffset, yOffset)
-
-    gl.activeTexture(gl.TEXTURE1)
-    gl.bindTexture(gl.TEXTURE_2D, this.colormapTexture)
-    gl.uniform1i(this.uColormap, 1)
-
-    const stride = params.stride
-    const tileSampleCoverage = TILE_LINES * stride
-    const samplesPerPixel = stride
-    const dpr = window.devicePixelRatio || 1
-    const viewWidthPx = this.width / dpr
-    const totalViewSamples = viewWidthPx * samplesPerPixel
-
-    const visibleStart = params.scrollOffset
-    const visibleEnd = visibleStart + totalViewSamples
-
-    const firstTileIdx = Math.floor(visibleStart / tileSampleCoverage)
-    const lastTileIdx = Math.ceil(visibleEnd / tileSampleCoverage)
-
-    for (let tIdx = firstTileIdx; tIdx <= lastTileIdx; tIdx++) {
-      const tileSampleStart = tIdx * tileSampleCoverage
-      const tileKey = `${tileSampleStart}_${params.fftSize}_${params.stride}`
-      const entry = this.tileCache.get(tileKey)
-      if (!entry) continue
-
-      gl.activeTexture(gl.TEXTURE0)
-      gl.bindTexture(gl.TEXTURE_2D, entry.texture)
-      gl.uniform1i(this.uTile, 0)
-
-      // Use actual numRows to compute the real sample extent of this tile
-      const actualTileEnd = tileSampleStart + entry.numRows * stride
-
-      // Map tile sample range to pixel positions
-      const tileStartPx = (tileSampleStart - visibleStart) / samplesPerPixel
-      const tileEndPx = (actualTileEnd - visibleStart) / samplesPerPixel
-
-      // Convert pixel coords to NDC (-1 to 1)
-      const x0 = (tileStartPx / viewWidthPx) * 2.0 - 1.0
-      const x1 = (tileEndPx / viewWidthPx) * 2.0 - 1.0
-
-      // Positions: quad spanning [x0,x1] horizontally, full height vertically
-      const positions = new Float32Array([
-        x0, -1,  x1, -1,  x0, 1,
-        x0,  1,  x1, -1,  x1, 1
-      ])
-
-      // texCoord: x=time within tile (0..1), y=frequency (0=top, 1=bottom)
-      // The shader swaps these to sample the texture correctly
-      const texCoords = new Float32Array([
-        0, 1,  1, 1,  0, 0,
-        0, 0,  1, 1,  1, 0
-      ])
-
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.posBuffer)
-      gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW)
-      gl.enableVertexAttribArray(this.aPos)
-      gl.vertexAttribPointer(this.aPos, 2, gl.FLOAT, false, 0, 0)
-
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.texBuffer)
-      gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.DYNAMIC_DRAW)
-      gl.enableVertexAttribArray(this.aTex)
-      gl.vertexAttribPointer(this.aTex, 2, gl.FLOAT, false, 0, 0)
-
-      gl.drawArrays(gl.TRIANGLES, 0, 6)
+    if (this.disposed || gl.isContextLost() || !this.width || !this.height) return
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.bindVertexArray(this.vao)
+    gl.viewport(0, 0, this.width, this.height)
+    gl.clear(gl.COLOR_BUFFER_BIT); gl.useProgram(this.program)
+    gl.uniform2f(this.power, params.powerMin, params.powerMax)
+    gl.uniform2f(this.y, params.yZoomLevel ?? 1, params.yScrollOffset ?? 0)
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.colormap)
+    const coverage = TILE_LINES * params.stride
+    const width = this.width / (window.devicePixelRatio || 1)
+    const end = params.scrollOffset + width * params.stride
+    for (let i = Math.floor(params.scrollOffset / coverage); i < Math.ceil(end / coverage); ++i) {
+      const start = i * coverage
+      const tile = this.tileCache.get(`${start}_${params.fftSize}_${params.stride}`)
+      if (!tile) continue
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tile.texture)
+      const x0 = (start - params.scrollOffset) / (params.stride * width) * 2 - 1
+      const x1 = (start + tile.numRows * params.stride - params.scrollOffset) / (params.stride * width) * 2 - 1
+      gl.uniform2f(this.bounds, x0, x1)
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
     }
+    gl.bindVertexArray(null)
   }
-
-  clearTiles(): void {
-    this.tileCache.clear()
-    this.gl.clear(this.gl.COLOR_BUFFER_BIT)
-  }
-
+  clearTiles(): void { this.tileCache.clear() }
   dispose(): void {
-    this.tileCache.clear()
-    if (this.colormapTexture) this.gl.deleteTexture(this.colormapTexture)
-    if (this.program) this.gl.deleteProgram(this.program)
-    if (this.posBuffer) this.gl.deleteBuffer(this.posBuffer)
-    if (this.texBuffer) this.gl.deleteBuffer(this.texBuffer)
+    this.disposed = true
+    this.tileCache.clear(); this.gpu?.dispose()
+    this.gl.deleteTexture(this.colormap); this.gl.deleteProgram(this.program); this.gl.deleteVertexArray(this.vao)
   }
 }

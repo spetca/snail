@@ -4,6 +4,7 @@ export const IPC = {
   CANCEL_DATASET: 'snail:cancel-dataset',
   OPEN_FILE: 'snail:open-file',
   GET_SAMPLES: 'snail:get-samples',
+  READ_FFT_TILE: 'snail:read-fft-tile',
   COMPUTE_FFT_TILE: 'snail:compute-fft-tile',
   EXPORT_SIGMF: 'snail:export-sigmf',
   CORRELATE: 'snail:correlate',

@@ -1,3 +1,5 @@
+import { fftTile } from '../dsp/fft-tiles'
+import { TileScheduler } from '../webgl/TileScheduler'
 import React, { useEffect, useRef, useState } from 'react'
 import { useStore } from '../state/store'
 import { spectralNoiseDb } from '../../shared/spectral-power'
@@ -7,6 +9,12 @@ interface PowerPoint { peak: number; noise: number }
 
 /** Sample FFT windows along the same time axis as the spectrogram. */
 export function PowerTrace({ width, height }: { width: number; height: number }): React.ReactElement {
+  const queueRef = useRef<TileScheduler<{ key: string; run: () => Promise<void> }> | null>(null)
+  const sequence = useRef(0)
+  useEffect(() => {
+    queueRef.current = new TileScheduler(() => false, task => task.run(), () => {}, 1)
+    return () => { queueRef.current?.dispose(); queueRef.current = null }
+  }, [])
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fileInfo = useStore(s => s.fileInfo)
   const scrollOffset = useStore(s => s.scrollOffset)
@@ -32,27 +40,38 @@ export function PowerTrace({ width, height }: { width: number; height: number })
     if (!fileInfo || width <= 0) return
     if (last < first) { setLoading(false); setError('No FFT bins in view. Increase detection FFT size or zoom out.'); return }
     setLoading(true)
-    void (async () => {
+    const run = () => (async () => {
       const result: PowerPoint[] = []
       const count = Math.min(Math.ceil(width), Math.ceil((fileInfo.totalSamples - scrollOffset) / stride))
-      for (let column = 0; column < count; column += 256) {
-        const tile = await window.snailAPI.computeFFTTile({ recordingId: fileInfo.recordingId,
-          startSample: scrollOffset + column * stride, fftSize: n, stride })
+      const firstLine = Math.floor(scrollOffset / stride)
+      for (let column = 0; column < count;) {
         if (cancelled) return
-        const rows = Math.min(256, count - column)
-        if (tile.length < rows * n) throw new Error('Incomplete FFT data for power trace')
+        const line = firstLine + column
+        const tileLine = Math.floor(line / 256) * 256
+        const offset = line - tileLine
+        const tile = await fftTile({ recordingId: fileInfo.recordingId,
+          startSample: tileLine * stride, fftSize: n, stride })
+        if (cancelled) return
+        const rows = Math.min(256 - offset, count - column)
+        if (tile.length < (offset + rows) * n) throw new Error('Incomplete FFT data for power trace')
         for (let rowIndex = 0; rowIndex < rows; ++rowIndex) {
-          const row = tile.subarray(rowIndex * n, (rowIndex + 1) * n)
+          if (rowIndex % 32 === 0) {
+            await new Promise(resolve => setTimeout(resolve, 0))
+            if (cancelled) return
+          }
+          const row = tile.subarray((offset + rowIndex) * n, (offset + rowIndex + 1) * n)
           if (row.some(value => !Number.isFinite(value))) throw new Error('Invalid FFT power data')
           let peak = -Infinity
           for (let bin = first; bin <= last; ++bin) peak = Math.max(peak, row[bin])
           result.push({ peak, noise: spectralNoiseDb(row, first, last) })
         }
+        column += rows
       }
       if (!cancelled) setPoints(result)
     })().catch(e => { if (!cancelled) setError(String(e)) })
       .finally(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
+    queueRef.current?.update([{ key: String(++sequence.current), run }])
+    return () => { cancelled = true; queueRef.current?.update([]) }
   }, [fileInfo, width, scrollOffset, stride, n, first, last])
 
   const absolute = config.thresholdMode === 'absolute'
